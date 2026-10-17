@@ -666,24 +666,59 @@
             // SSE re-inits reuse this so they don't fire a new network request.
             const liveThumbCache = {};
 
+            // View currently on screen. Every channel is rendered three times
+            // (expanded / grid / collapsed) but only one copy is ever visible, so
+            // thumbnails, marquees and logs are only maintained for that one.
+            // setView() catches the others up when they become visible.
+            let currentView = 'expanded';
+
+            function readStored(key) {
+                try { return localStorage.getItem(key); } catch (e) { return null; }
+            }
+            function writeStored(key, value) {
+                try { localStorage.setItem(key, value); } catch (e) { /* storage unavailable */ }
+            }
+
+            // Thumbnail switchers of the visible view, optionally limited to the
+            // part of the page that was just redrawn (`scope`).
+            function activeSwitchers(scope) {
+                return (scope || document).querySelectorAll('.view-' + currentView + ' .img-switcher');
+            }
+
+            function savedThumbMode(switcher) {
+                const isOnline = switcher.dataset.online === 'true';
+                const hasCard = switcher.dataset.hasCard === '1';
+                const defaultMode = isOnline ? 'live' : (hasCard ? 'card' : 'live');
+                return readStored('dvr-thumb-' + switcher.dataset.channelId) || defaultMode;
+            }
+
             function setThumb(el, newSrc) {
+                // Already showing (or already loading) this exact image: do nothing.
+                // Without this check every redraw re-requested and re-decoded every
+                // thumbnail on the page, which is what froze the browser.
+                if (el.dataset.src === newSrc || el._loadingSrc === newSrc) return;
                 const layers = el.querySelectorAll('.thumb-layer');
                 if (layers.length < 2) return;
-                const activeIdx = parseInt(el.dataset.activeLayer || '0');
-                const nextIdx = 1 - activeIdx;
+                el._loadingSrc = newSrc;
                 const preloader = new Image();
                 preloader.src = newSrc;
                 const ready = preloader.decode
                     ? preloader.decode()
                     : new Promise(r => { preloader.onload = r; preloader.onerror = r; });
                 ready.then(() => {
+                    if (el._loadingSrc !== newSrc) return; // superseded by a newer request
+                    const activeIdx = parseInt(el.dataset.activeLayer || '0');
+                    const nextIdx = 1 - activeIdx;
                     layers[nextIdx].style.backgroundImage = `url("${newSrc}")`;
+                    el.dataset.src = newSrc;
                     requestAnimationFrame(() => {
                         layers[nextIdx].style.opacity = '1';
                         layers[activeIdx].style.opacity = '0';
                         el.dataset.activeLayer = String(nextIdx);
                     });
-                }).catch(() => {});
+                }).catch(() => {}).then(() => {
+                    if (el._loadingSrc === newSrc) el._loadingSrc = null;
+                });
             }
 
             // refresh=true always fetches a new timestamped live URL.
@@ -718,8 +753,11 @@
             // Used to restore the animation phase after SSE rebuilds the DOM.
             const marqueeState = {};
 
-            function initMarquees() {
-                document.querySelectorAll('.collapsed-title').forEach(el => {
+            function initMarquees(scope) {
+                // Only the collapsed view has marquees; measuring hidden elements is
+                // pointless and forces a layout each time.
+                if (currentView !== 'collapsed') return;
+                (scope || document).querySelectorAll('.collapsed-title').forEach(el => {
                     // Skip channels not touched by this SSE swap — their track is already running
                     if (el.querySelector('.marquee-track')) return;
                     const span = el.querySelector('span');
@@ -770,14 +808,9 @@
             }
 
             // SSE re-init: reuse cached URLs, no new network requests
-            function initThumbSwitchers() {
-                document.querySelectorAll('.img-switcher').forEach(switcher => {
-                    const channelID = switcher.dataset.channelId;
-                    const isOnline = switcher.dataset.online === 'true';
-                    const hasCard = switcher.dataset.hasCard === '1';
-                    const defaultMode = isOnline ? 'live' : (hasCard ? 'card' : 'live');
-                    const saved = localStorage.getItem('dvr-thumb-' + channelID) || defaultMode;
-                    applyThumbMode(switcher, saved, false);
+            function initThumbSwitchers(scope) {
+                activeSwitchers(scope).forEach(switcher => {
+                    applyThumbMode(switcher, savedThumbMode(switcher), false);
                 });
             }
 
@@ -789,26 +822,23 @@
                 const channelID = switcher.dataset.channelId;
                 const mode = btn.dataset.mode;
                 applyThumbMode(switcher, mode, true);
-                localStorage.setItem('dvr-thumb-' + channelID, mode);
+                writeStored('dvr-thumb-' + channelID, mode);
             });
 
-            // 60s interval: force a fresh live thumbnail fetch
+            // Every 15s: look for a newer live thumbnail. The URL only changes once
+            // a minute (cache bucket), so most ticks find the same image and do nothing.
             setInterval(function() {
                 if (document.hidden) return;
-                document.querySelectorAll('.img-switcher').forEach(switcher => {
-                    const channelID = switcher.dataset.channelId;
-                    const isOnline = switcher.dataset.online === 'true';
-                    const hasCard = switcher.dataset.hasCard === '1';
-                    const defaultMode = isOnline ? 'live' : (hasCard ? 'card' : 'live');
-                    const saved = localStorage.getItem('dvr-thumb-' + channelID) || defaultMode;
-                    if (saved === 'live') applyThumbMode(switcher, 'live', true);
+                activeSwitchers().forEach(switcher => {
+                    if (savedThumbMode(switcher) === 'live') applyThumbMode(switcher, 'live', true);
                 });
             }, 15000);
 
             function setView(view) {
+                currentView = view;
                 const list = document.getElementById('channels-list');
                 if (list) list.setAttribute('data-view', view);
-                localStorage.setItem('dvr-view', view);
+                writeStored('dvr-view', view);
                 ['expanded', 'grid', 'collapsed'].forEach(function(v) {
                     const btn = document.getElementById('view-btn-' + v);
                     if (btn) {
@@ -821,33 +851,57 @@
                         }
                     }
                 });
+                // Cards of the view that just became visible were not updated while hidden.
+                flushPendingLogs();
+                initThumbSwitchers();
+                initMarquees();
             }
 
 
-            // before content was swapped by HTMX
+            // Log text received while the expanded view (the only one that shows
+            // logs) is hidden: textarea -> latest text, applied by setView().
+            const pendingLogs = new Map();
+
+            function writeLog(textarea, text) {
+                textarea.value = text;
+                textarea.scrollTop = textarea.scrollHeight;
+            }
+
+            function flushPendingLogs() {
+                if (currentView !== 'expanded') return;
+                pendingLogs.forEach((text, textarea) => writeLog(textarea, text));
+                pendingLogs.clear();
+            }
+
+            // Before content is swapped by HTMX.
+            // Log events carry the whole log as plain text: write it straight into
+            // the textarea instead of letting htmx parse and swap it as HTML.
             document.body.addEventListener("htmx:sseBeforeMessage", function (e) {
-                // ignore anything with `-log` content swap if "auto-update" was unchecked
-                let sswe_id = e.detail.elt.getAttribute('sse-swap')
-                if (sswe_id && sswe_id.endsWith("-log") ) {
-                    if (!e.detail.elt.closest(".ts-box").querySelector("[type=checkbox]").checked) {
-                        e.preventDefault()
-                        return
-                    }
+                const elt = e.detail.elt;
+                const swapId = elt && elt.getAttribute('sse-swap');
+                if (!swapId || !swapId.endsWith("-log")) return;
+
+                e.preventDefault();
+                const box = elt.closest(".ts-box");
+                const autoUpdate = box && box.querySelector("[type=checkbox]");
+                if (autoUpdate && !autoUpdate.checked) return; // "Auto-Update & Scroll Logs" is off
+                if (currentView !== 'expanded') {
+                    pendingLogs.set(elt, e.detail.data);
+                    return;
                 }
-                // else scroll the textarea to bottom with async trick
-                setTimeout(() => {
-                    let textarea = e.detail.elt.closest(".ts-box") && e.detail.elt.closest(".ts-box").querySelector("textarea")
-                    if (textarea) textarea.scrollTop = textarea.scrollHeight
-                }, 0)
+                writeLog(elt, e.detail.data);
             })
 
-            // after content was swapped by HTMX (for status updates)
+            // After content was swapped by HTMX: only touch the part that changed.
             document.body.addEventListener("htmx:sseMessage", function (e) {
-                let sswe_id = e.detail.elt.getAttribute('sse-swap')
-                if (sswe_id && sswe_id.endsWith("-info") ) {
-                    fetchStats();
-                    initThumbSwitchers();
-                    initMarquees();
+                const elt = e.detail.elt;
+                const swapId = elt && elt.getAttribute('sse-swap');
+                if (!swapId) return;
+                if (swapId.endsWith("-info")) {
+                    scheduleStats();
+                    initMarquees(elt);
+                } else if (swapId.endsWith("-thumb")) {
+                    initThumbSwitchers(elt);
                 }
             })
 
@@ -888,10 +942,8 @@
 
             // Initial setup on page load
             document.addEventListener("DOMContentLoaded", function() {
-                const savedView = localStorage.getItem('dvr-view') || 'expanded';
-                setView(savedView);
-                initThumbSwitchers();
-                initMarquees();
+                const savedView = readStored('dvr-view') || 'expanded';
+                setView(savedView); // also initialises thumbnails and marquees of that view
             });
 
             document.body.querySelectorAll("textarea").forEach((textarea) => {
@@ -913,7 +965,26 @@
                 if (h > 0) return `${h}h ${m}m`;
                 return `${m}m`;
             }
+            // Stats are refreshed every 30s and, when a channel changes state, soon
+            // after - but never more than once every STATS_MIN_GAP_MS. (They used to
+            // be fetched on every single channel update.)
+            const STATS_MIN_GAP_MS = 10000;
+            let lastStatsAt = 0;
+            let statsTimer = null;
+            function scheduleStats() {
+                if (statsTimer) return;
+                const wait = Math.max(0, STATS_MIN_GAP_MS - (Date.now() - lastStatsAt));
+                statsTimer = setTimeout(function() {
+                    statsTimer = null;
+                    fetchStats();
+                }, wait);
+            }
+            document.addEventListener('visibilitychange', function() {
+                if (!document.hidden) fetchStats();
+            });
             function fetchStats() {
+                if (document.hidden) return;
+                lastStatsAt = Date.now();
                 fetch('/api/stats').then(r => r.json()).then(data => {
                     const bar = document.getElementById('stats-bar');
                     if (!bar) return;

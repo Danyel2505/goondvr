@@ -14,7 +14,10 @@ type IManager interface {
 	PauseChannel(channelID string) error
 	ResumeChannel(channelID string) error
 	ChannelInfo() []*entity.ChannelInfo
-	Publish(name string, ch *entity.ChannelInfo)
+	// Publish pushes the given kind of update to the web UI. It never blocks and
+	// reports false when the event could not be queued (slow browser), in which
+	// case the caller should retry later.
+	Publish(name string, ch *entity.ChannelInfo) bool
 	Subscriber(w http.ResponseWriter, r *http.Request)
 	LoadConfig() error
 	SaveConfig() error

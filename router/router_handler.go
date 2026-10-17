@@ -94,10 +94,16 @@ func ResumeChannel(c *gin.Context) {
 
 // ThumbProxy proxies the channel's summary card image from the CDN through the server.
 // This avoids hotlink-protection issues when the browser requests the image directly.
+// Images are cached in memory and the browser may cache them too (see thumb_cache.go).
 func ThumbProxy(c *gin.Context) {
 	imgURL := server.Manager.GetChannelThumb(c.Param("channelID"))
 	if imgURL == "" {
 		c.Status(http.StatusNotFound)
+		return
+	}
+
+	if e, ok := thumbs.get(imgURL); ok {
+		writeThumb(c.Writer, e.data, e.contentType, cardThumbTTL)
 		return
 	}
 
@@ -109,7 +115,8 @@ func ThumbProxy(c *gin.Context) {
 	}
 
 	contentType := http.DetectContentType(imgBytes)
-	c.Data(http.StatusOK, contentType, imgBytes)
+	thumbs.put(imgURL, imgBytes, contentType, cardThumbTTL)
+	writeThumb(c.Writer, imgBytes, contentType, cardThumbTTL)
 }
 
 // LiveThumbProxy proxies the channel's live-updating thumbnail from the CDN.
@@ -122,6 +129,11 @@ func LiveThumbProxy(c *gin.Context) {
 		return
 	}
 
+	if e, ok := thumbs.get(imgURL); ok {
+		writeThumb(c.Writer, e.data, e.contentType, liveThumbTTL)
+		return
+	}
+
 	req := internal.NewMediaReqWithReferer("https://stripchat.com/")
 	imgBytes, err := req.GetBytes(c.Request.Context(), imgURL)
 	if err != nil {
@@ -130,7 +142,8 @@ func LiveThumbProxy(c *gin.Context) {
 	}
 
 	contentType := http.DetectContentType(imgBytes)
-	c.Data(http.StatusOK, contentType, imgBytes)
+	thumbs.put(imgURL, imgBytes, contentType, liveThumbTTL)
+	writeThumb(c.Writer, imgBytes, contentType, liveThumbTTL)
 }
 
 // Updates handles the SSE connection for updates.

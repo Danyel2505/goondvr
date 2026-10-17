@@ -147,11 +147,7 @@ func (ch *Channel) Monitor(runID uint64) {
 // Update sends an update signal to the channel's update channel.
 // This notifies the Server-sent Event to boradcast the channel information to the client.
 func (ch *Channel) Update() {
-	select {
-	case <-ch.done:
-		return
-	case ch.UpdateCh <- true:
-	}
+	signal(ch.UpdateCh)
 }
 
 // RecordStream records the stream of the channel using the provided site and HTTP client.

@@ -13,13 +13,30 @@ import (
 	"github.com/HeapOfChaos/goondvr/server"
 )
 
+// uiMinInterval is the minimum time between two pushes of the same kind
+// (info / thumb / log) of one channel to the web UI. Recording fires a signal
+// on every segment (several per second with LL-HLS), and every push makes the
+// browser rebuild part of the page, so bursts are coalesced and only the
+// latest state is sent. (A variable only so tests can shorten it.)
+var uiMinInterval = 2 * time.Second
+
+// maxLogLines is the number of log lines kept per channel for the web UI.
+const maxLogLines = 100
+
 // Channel represents a channel instance.
 type Channel struct {
 	CancelFunc context.CancelFunc
-	LogCh      chan string
-	UpdateCh   chan bool
-	ThumbCh    chan bool
-	done       chan struct{}
+
+	// LogCh, UpdateCh and ThumbCh are "something changed" signals for the
+	// Publisher. They hold at most one pending signal and are written with a
+	// non-blocking send (see signal), so neither the recording loop nor the
+	// loggers can ever be stalled by a slow or frozen browser.
+	LogCh    chan bool
+	UpdateCh chan bool
+	ThumbCh  chan bool
+	done     chan struct{}
+	// publisherExited is closed when the Publisher goroutine has returned.
+	publisherExited chan struct{}
 
 	IsOnline            bool
 	StreamedAt          int64
@@ -58,10 +75,11 @@ type Channel struct {
 // New creates a new channel instance with the given manager and configuration.
 func New(conf *entity.ChannelConfig) *Channel {
 	ch := &Channel{
-		LogCh:            make(chan string),
-		UpdateCh:         make(chan bool),
-		ThumbCh:          make(chan bool),
+		LogCh:            make(chan bool, 1),
+		UpdateCh:         make(chan bool, 1),
+		ThumbCh:          make(chan bool, 1),
 		done:             make(chan struct{}),
+		publisherExited:  make(chan struct{}),
 		Config:           conf,
 		CancelFunc:       func() {},
 		RoomTitle:        conf.RoomTitle,
@@ -74,27 +92,77 @@ func New(conf *entity.ChannelConfig) *Channel {
 	return ch
 }
 
-// Publisher listens for log messages and updates from the channel
-// and publishes once received.
+// signal raises a coalescing "something changed" flag. It never blocks: if a
+// signal is already pending the new one is merged into it.
+func signal(c chan bool) {
+	select {
+	case c <- true:
+	default:
+	}
+}
+
+// Publisher turns the change signals of the channel into SSE events for the
+// web UI.
+//
+// Each kind of event (info, thumb, log) is sent at most once per
+// uiMinInterval. The first change after a quiet period is sent immediately;
+// changes that arrive during the cool-down are merged and sent once it ends,
+// always carrying the latest state. If the SSE queue is full (browser too slow
+// to keep up) the push is retried later instead of blocking.
 func (ch *Channel) Publisher() {
+	defer close(ch.publisherExited)
+
+	events := [...]entity.Event{entity.EventUpdate, entity.EventThumb, entity.EventLog}
+	var (
+		pending [len(events)]bool
+		last    [len(events)]time.Time
+		wake    <-chan time.Time
+	)
+
 	for {
 		select {
 		case <-ch.done:
 			return
-		case v := <-ch.LogCh:
-			// Append the log message to ch.Logs and keep only the last 100 rows
-			ch.logsMu.Lock()
-			ch.Logs = append(ch.Logs, v)
-			if len(ch.Logs) > 100 {
-				ch.Logs = ch.Logs[len(ch.Logs)-100:]
-			}
-			ch.logsMu.Unlock()
-			server.Manager.Publish(entity.EventLog, ch.ExportInfo())
-
 		case <-ch.UpdateCh:
-			server.Manager.Publish(entity.EventUpdate, ch.ExportInfo())
+			pending[0] = true
 		case <-ch.ThumbCh:
-			server.Manager.Publish(entity.EventThumb, ch.ExportInfo())
+			pending[1] = true
+		case <-ch.LogCh:
+			pending[2] = true
+		case <-wake:
+		}
+
+		var (
+			info *entity.ChannelInfo
+			wait time.Duration = -1
+			now                = time.Now()
+		)
+		for i, evt := range events {
+			if !pending[i] {
+				continue
+			}
+			if remaining := uiMinInterval - now.Sub(last[i]); remaining > 0 {
+				if wait < 0 || remaining < wait {
+					wait = remaining
+				}
+				continue
+			}
+			if info == nil {
+				info = ch.ExportInfo()
+			}
+			// Even when the queue is full we restart the cool-down, so a stuck
+			// browser is retried every uiMinInterval rather than in a hot loop.
+			last[i] = now
+			if server.Manager.Publish(evt, info) {
+				pending[i] = false
+			} else if wait < 0 || uiMinInterval < wait {
+				wait = uiMinInterval
+			}
+		}
+
+		wake = nil
+		if wait >= 0 {
+			wake = time.After(wait)
 		}
 	}
 }
@@ -246,11 +314,7 @@ func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 
 // UpdateThumb sends a thumbnail-only update signal to the publisher.
 func (ch *Channel) UpdateThumb() {
-	select {
-	case <-ch.done:
-		return
-	case ch.ThumbCh <- true:
-	}
+	signal(ch.ThumbCh)
 }
 
 // requestMonitorStart starts a monitor immediately when possible, or records
@@ -314,14 +378,24 @@ func (ch *Channel) stopPublisher() {
 	})
 }
 
-// sendLog forwards a log line to the publisher unless the channel has been
-// permanently shut down.
+// sendLog stores a log line (keeping the last maxLogLines) and tells the
+// publisher that the log changed, unless the channel has been permanently shut
+// down. It never blocks on the web UI.
 func (ch *Channel) sendLog(msg string) {
 	select {
 	case <-ch.done:
 		return
-	case ch.LogCh <- msg:
+	default:
 	}
+
+	ch.logsMu.Lock()
+	ch.Logs = append(ch.Logs, msg)
+	if len(ch.Logs) > maxLogLines {
+		ch.Logs = ch.Logs[len(ch.Logs)-maxLogLines:]
+	}
+	ch.logsMu.Unlock()
+
+	signal(ch.LogCh)
 }
 
 // waitForMonitorStop blocks until the current monitor run has finished cleanup.

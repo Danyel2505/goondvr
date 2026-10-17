@@ -48,6 +48,11 @@ func New() (*Manager, error) {
 
 	server := sse.New()
 	server.SplitData = true
+	// Every event is a full snapshot of a channel's state, so a late event
+	// replaces an earlier one. A small queue keeps the backlog of a slow
+	// browser short (instead of ~1000 stale events to replay when it wakes up);
+	// anything that does not fit is dropped by TryPublish and re-sent later.
+	server.BufferSize = sseBufferSize
 
 	updateStream := server.CreateStream("updates")
 	updateStream.AutoReplay = false
@@ -63,7 +68,7 @@ func New() (*Manager, error) {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
-			server.Publish("updates", &sse.Event{
+			server.TryPublish("updates", &sse.Event{
 				Event: []byte("heartbeat"),
 				Data:  []byte(""),
 			})
@@ -72,6 +77,9 @@ func New() (*Manager, error) {
 
 	return m, nil
 }
+
+// sseBufferSize is the size of the SSE event queue (see New).
+const sseBufferSize = 64
 
 // settingsFile is the path to the persisted global settings file.
 const settingsFile = "./conf/settings.json"
@@ -609,18 +617,23 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	return channels
 }
 
-// Publish sends an SSE event to the specified channel.
-func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) {
+// Publish sends an SSE event for the given channel to the web UI.
+//
+// It never blocks: when the SSE queue is full (a browser that stopped reading)
+// the event is dropped and false is returned so the caller can retry with a
+// fresh snapshot later. Blocking here used to freeze the recording loop of
+// every channel as soon as one browser tab got stuck.
+func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) bool {
 	switch evt {
 	case entity.EventUpdate:
 		var b bytes.Buffer
 		for _, mode := range []string{"expanded", "grid", "collapsed"} {
 			if err := view.InfoTpl.ExecuteTemplate(&b, "channel_details", withViewMode(info, mode)); err != nil {
 				fmt.Println("Error executing template:", err)
-				return
+				return true // retrying would fail the same way
 			}
 		}
-		m.SSE.Publish("updates", &sse.Event{
+		return m.SSE.TryPublish("updates", &sse.Event{
 			Event: []byte(info.ChannelID + "-info"),
 			Data:  b.Bytes(),
 		})
@@ -629,19 +642,20 @@ func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) {
 		for _, mode := range []string{"expanded", "grid", "collapsed"} {
 			if err := view.InfoTpl.ExecuteTemplate(&b, "channel_thumb", withViewMode(info, mode)); err != nil {
 				fmt.Println("Error executing template:", err)
-				return
+				return true // retrying would fail the same way
 			}
 		}
-		m.SSE.Publish("updates", &sse.Event{
+		return m.SSE.TryPublish("updates", &sse.Event{
 			Event: []byte(info.ChannelID + "-thumb"),
 			Data:  b.Bytes(),
 		})
 	case entity.EventLog:
-		m.SSE.Publish("updates", &sse.Event{
+		return m.SSE.TryPublish("updates", &sse.Event{
 			Event: []byte(info.ChannelID + "-log"),
 			Data:  []byte(strings.Join(info.Logs, "\n")),
 		})
 	}
+	return true
 }
 
 func withViewMode(info *entity.ChannelInfo, mode string) *entity.ChannelInfo {
