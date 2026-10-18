@@ -82,13 +82,29 @@ func StopChannel(c *gin.Context) {
 func PauseChannel(c *gin.Context) {
 	server.Manager.PauseChannel(c.Param("channelID"))
 
-	c.Redirect(http.StatusFound, "/")
+	respondDone(c)
 }
 
 // ResumeChannel resumes a paused channel.
 func ResumeChannel(c *gin.Context) {
 	server.Manager.ResumeChannel(c.Param("channelID"))
 
+	respondDone(c)
+}
+
+// respondDone ends a request that changed the state of a channel.
+//
+// The Pause/Resume buttons are htmx requests that do not use the response (the
+// card is redrawn by the event stream), so they get an empty 204. Following a
+// redirect made the browser download and throw away the whole dashboard page
+// (three views of every channel) on every click. Plain form posts are still
+// redirected to the dashboard.
+func respondDone(c *gin.Context) {
+	if c.GetHeader("HX-Request") == "true" {
+		c.Status(http.StatusNoContent)
+		c.Writer.WriteHeaderNow()
+		return
+	}
 	c.Redirect(http.StatusFound, "/")
 }
 
