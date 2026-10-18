@@ -46,15 +46,22 @@ func (f *fakeUI) count(evt string) int {
 
 func newTestChannel(t *testing.T, ui *fakeUI, interval time.Duration) *Channel {
 	t.Helper()
-	oldInterval, oldMgr, oldCfg := uiMinInterval, server.Manager, server.Config
-	uiMinInterval = interval
+	return newTestChannelGap(t, ui, interval, interval)
+}
+
+// newTestChannelGap is newTestChannel with a separate (shorter) gap for
+// urgent state changes.
+func newTestChannelGap(t *testing.T, ui *fakeUI, interval, urgentGap time.Duration) *Channel {
+	t.Helper()
+	oldInterval, oldUrgent, oldMgr, oldCfg := uiMinInterval, uiUrgentInterval, server.Manager, server.Config
+	uiMinInterval, uiUrgentInterval = interval, urgentGap
 	server.Manager = ui
 	server.Config = &entity.Config{}
 	ch := New(&entity.ChannelConfig{Username: "tester", Site: "chaturbate"})
 	t.Cleanup(func() {
 		ch.stopPublisher()
 		<-ch.publisherExited // the goroutine reads the globals restored below
-		uiMinInterval, server.Manager, server.Config = oldInterval, oldMgr, oldCfg
+		uiMinInterval, uiUrgentInterval, server.Manager, server.Config = oldInterval, oldUrgent, oldMgr, oldCfg
 	})
 	return ch
 }
@@ -183,5 +190,111 @@ func TestEachRunGetsItsOwnContext(t *testing.T) {
 	}
 	if second.Err() != nil {
 		t.Fatal("second run starts with an already cancelled context")
+	}
+}
+
+// waitFor polls until cond holds or the timeout expires.
+func waitFor(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return cond()
+}
+
+// A state change (paused, resumed...) must reach the browser at once even
+// while the channel is in the middle of the progress cool-down.
+func TestStateChangeBypassesProgressCooldown(t *testing.T) {
+	ui := &fakeUI{pushes: map[string]int{}}
+	ch := newTestChannelGap(t, ui, time.Hour, 10*time.Millisecond)
+
+	ch.Update() // first progress push goes out immediately
+	if !waitFor(time.Second, func() bool { return ui.count(entity.EventUpdate) == 1 }) {
+		t.Fatal("first progress update was not pushed")
+	}
+	ch.Update() // second one must wait for the (one hour) cool-down
+	time.Sleep(150 * time.Millisecond)
+	if got := ui.count(entity.EventUpdate); got != 1 {
+		t.Fatalf("progress update was not held back: %d pushes", got)
+	}
+
+	ch.UpdateNow() // a state change must not
+	if !waitFor(time.Second, func() bool { return ui.count(entity.EventUpdate) == 2 }) {
+		t.Fatalf("state change stayed behind the progress cool-down (%d pushes)", ui.count(entity.EventUpdate))
+	}
+}
+
+// ...but a storm of state changes is still merged into a few pushes.
+func TestStateChangesAreStillCoalesced(t *testing.T) {
+	ui := &fakeUI{pushes: map[string]int{}}
+	ch := newTestChannelGap(t, ui, time.Hour, 50*time.Millisecond)
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		ch.UpdateNow()
+		ch.UpdateThumb()
+		time.Sleep(100 * time.Microsecond)
+	}
+	time.Sleep(120 * time.Millisecond)
+
+	for _, evt := range []string{entity.EventUpdate, entity.EventThumb} {
+		if got := ui.count(evt); got < 2 || got > 10 {
+			t.Fatalf("%s: %d pushes for a 300 ms storm with a 50 ms gap, want a handful (2-10)", evt, got)
+		}
+	}
+}
+
+// Info/Error lines ("channel resumed"...) are urgent, per-segment Verbose
+// lines are not.
+func TestInfoLogIsUrgentVerboseIsNot(t *testing.T) {
+	ui := &fakeUI{pushes: map[string]int{}}
+	ch := newTestChannelGap(t, ui, time.Hour, 10*time.Millisecond)
+
+	ch.Verbose("duration: 1")
+	if !waitFor(time.Second, func() bool { return ui.count(entity.EventLog) == 1 }) {
+		t.Fatal("first log push missing")
+	}
+	ch.Verbose("duration: 2")
+	time.Sleep(150 * time.Millisecond)
+	if got := ui.count(entity.EventLog); got != 1 {
+		t.Fatalf("Verbose log line was not held back: %d pushes", got)
+	}
+
+	ch.Info("channel resumed")
+	if !waitFor(time.Second, func() bool { return ui.count(entity.EventLog) == 2 }) {
+		t.Fatal("Info log line stayed behind the progress cool-down")
+	}
+	ui.mu.Lock()
+	defer ui.mu.Unlock()
+	if n := len(ui.lastLog); n != 3 {
+		t.Fatalf("pushed log has %d lines, want all 3", n)
+	}
+}
+
+// Resume while the previous run is still stopping is queued, and says so.
+func TestResumeWhilePreviousRunIsStopping(t *testing.T) {
+	ui := &fakeUI{pushes: map[string]int{}}
+	ch := newTestChannel(t, ui, time.Millisecond)
+
+	ch.monitorMu.Lock()
+	ch.startMonitorLocked() // a run is active
+	ch.monitorMu.Unlock()
+
+	if _, started, queued := ch.requestMonitorStart(); started || queued {
+		t.Fatalf("resume of a channel that is already running: started=%v queued=%v, want neither", started, queued)
+	}
+
+	ch.Pause() // run is cancelled but has not finished yet
+	if _, started, queued := ch.requestMonitorStart(); started || !queued {
+		t.Fatalf("resume during shutdown: started=%v queued=%v, want queued only", started, queued)
+	}
+	ch.monitorMu.Lock()
+	requested := ch.monitorRestartRequested
+	ch.monitorMu.Unlock()
+	if !requested {
+		t.Fatal("restart was not recorded for when the previous run finishes")
 	}
 }

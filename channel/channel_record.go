@@ -48,7 +48,7 @@ func (ch *Channel) Monitor(runID uint64) {
 			ch.StreamedAt = ts
 			ch.Config.StreamedAt = ts
 			_ = server.Manager.SaveConfig()
-			ch.Update()
+			ch.UpdateNow()
 		}
 	}
 
@@ -143,12 +143,6 @@ func (ch *Channel) Monitor(runID uint64) {
 	}
 }
 
-// Update sends an update signal to the channel's update channel.
-// This notifies the Server-sent Event to boradcast the channel information to the client.
-func (ch *Channel) Update() {
-	signal(ch.UpdateCh)
-}
-
 // RecordStream records the stream of the channel using the provided site and HTTP client.
 // It retrieves the stream information and starts watching the segments.
 func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, req *internal.Req) error {
@@ -184,7 +178,7 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 			if thumbChanged {
 				ch.UpdateThumb()
 			}
-			ch.Update()
+			ch.UpdateNow()
 		}
 	}
 

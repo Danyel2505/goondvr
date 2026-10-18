@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/HeapOfChaos/goondvr/entity"
@@ -19,6 +20,13 @@ import (
 // browser rebuild part of the page, so bursts are coalesced and only the
 // latest state is sent. (A variable only so tests can shorten it.)
 var uiMinInterval = 2 * time.Second
+
+// uiUrgentInterval is the minimum time between two pushes when the change is a
+// state change the user is waiting to see (paused, resumed, online/offline,
+// "channel resumed" in the log...). Those must not sit behind the progress
+// cool-down above; this small gap only keeps a burst of them from flooding the
+// browser. (A variable only so tests can shorten it.)
+var uiUrgentInterval = 200 * time.Millisecond
 
 // maxLogLines is the number of log lines kept per channel for the web UI.
 const maxLogLines = 100
@@ -35,6 +43,10 @@ type Channel struct {
 	done     chan struct{}
 	// publisherExited is closed when the Publisher goroutine has returned.
 	publisherExited chan struct{}
+	// urgent[i] is set by a producer whose change to event kind i (index in
+	// Publisher's events: info, thumb, log) is a state change rather than
+	// progress; the Publisher then uses uiUrgentInterval instead of uiMinInterval.
+	urgent [3]atomic.Bool
 
 	IsOnline            bool
 	StreamedAt          int64
@@ -133,18 +145,33 @@ func (ch *Channel) Publisher() {
 		}
 
 		var (
+			due  [len(events)]bool
 			info *entity.ChannelInfo
 			wait time.Duration = -1
 			now                = time.Now()
 		)
-		for i, evt := range events {
+		for i := range events {
 			if !pending[i] {
 				continue
 			}
-			if remaining := uiMinInterval - now.Sub(last[i]); remaining > 0 {
+			gap := uiMinInterval
+			if ch.urgent[i].Load() {
+				gap = uiUrgentInterval
+			}
+			if remaining := gap - now.Sub(last[i]); remaining > 0 {
 				if wait < 0 || remaining < wait {
 					wait = remaining
 				}
+				continue
+			}
+			// Clear the flag *before* the snapshot below is taken: a state change
+			// made after this point raises it again together with its own signal,
+			// and one made before it is already part of the snapshot.
+			ch.urgent[i].Store(false)
+			due[i] = true
+		}
+		for i, evt := range events {
+			if !due[i] {
 				continue
 			}
 			if info == nil {
@@ -170,7 +197,7 @@ func (ch *Channel) Publisher() {
 // Info logs an informational message to both the browser log and stdout.
 func (ch *Channel) Info(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	ch.sendLog(fmt.Sprintf("%s [INFO] %s", time.Now().Format("15:04"), msg))
+	ch.sendLogUrgent(fmt.Sprintf("%s [INFO] %s", time.Now().Format("15:04"), msg))
 	log.Printf(" INFO [%s] %s", ch.Config.Username, msg)
 }
 
@@ -187,7 +214,7 @@ func (ch *Channel) Verbose(format string, a ...any) {
 // Error logs an error message to both the browser log and stdout.
 func (ch *Channel) Error(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	ch.sendLog(fmt.Sprintf("%s [ERROR] %s", time.Now().Format("15:04"), msg))
+	ch.sendLogUrgent(fmt.Sprintf("%s [ERROR] %s", time.Now().Format("15:04"), msg))
 	log.Printf("ERROR [%s] %s", ch.Config.Username, msg)
 }
 
@@ -258,7 +285,7 @@ func (ch *Channel) Pause() {
 	ch.monitorMu.Unlock()
 	cancel()
 
-	ch.Update()
+	ch.UpdateNow()
 	ch.Info("channel paused")
 }
 
@@ -296,11 +323,17 @@ func (ch *Channel) Resume(startSeq int) {
 				return
 			}
 		}
-		runID, ok := ch.requestMonitorStart()
-		if !ok {
+		runID, started, queued := ch.requestMonitorStart()
+		if queued {
+			// The previous run is still shutting down; the new one starts the
+			// moment it is done. Say so instead of looking like the click was lost.
+			ch.Info("resume requested, starting as soon as the previous run has stopped")
 			return
 		}
-		ch.Update()
+		if !started {
+			return
+		}
+		ch.UpdateNow()
 		ch.Info("channel resumed")
 		ch.Monitor(runID)
 	}()
@@ -313,28 +346,47 @@ func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 		ch.NumViewers = 0
 	}
 	ch.UpdateThumb()
-	ch.Update()
+	ch.UpdateNow()
 }
 
-// UpdateThumb sends a thumbnail-only update signal to the publisher.
+// Update tells the publisher that the progress of the channel changed (a new
+// segment was written). Bursts are merged and sent at most once per
+// uiMinInterval. Use UpdateNow for state changes.
+func (ch *Channel) Update() {
+	signal(ch.UpdateCh)
+}
+
+// UpdateNow tells the publisher that the state of the channel changed (paused,
+// resumed, online/offline, new metadata). It is sent without waiting for the
+// progress cool-down.
+func (ch *Channel) UpdateNow() {
+	ch.urgent[0].Store(true)
+	signal(ch.UpdateCh)
+}
+
+// UpdateThumb sends a thumbnail-only update signal to the publisher. Thumbnails
+// only change together with the state of the channel, so it is never held back.
 func (ch *Channel) UpdateThumb() {
+	ch.urgent[1].Store(true)
 	signal(ch.ThumbCh)
 }
 
-// requestMonitorStart starts a monitor immediately when possible, or records
-// a pending restart if a previous monitor is still shutting down.
-func (ch *Channel) requestMonitorStart() (uint64, bool) {
+// requestMonitorStart starts a monitor immediately when possible. If a
+// previous monitor of a paused channel is still shutting down it records a
+// pending restart instead and reports queued=true.
+func (ch *Channel) requestMonitorStart() (runID uint64, started, queued bool) {
 	ch.monitorMu.Lock()
 	defer ch.monitorMu.Unlock()
 
 	if ch.monitorRunning {
 		if ch.Config.IsPaused {
 			ch.monitorRestartRequested = true
+			return 0, false, true
 		}
-		return 0, false
+		return 0, false, false
 	}
 
-	return ch.startMonitorLocked(), true
+	return ch.startMonitorLocked(), true, false
 }
 
 // finishMonitor clears the running flag when a monitor loop exits.
@@ -357,7 +409,7 @@ func (ch *Channel) finishMonitor() {
 	}
 
 	if shouldRestart {
-		ch.Update()
+		ch.UpdateNow()
 		ch.Info("channel resumed")
 		go ch.Monitor(runID)
 	}
@@ -402,11 +454,28 @@ func (ch *Channel) stopPublisher() {
 
 // sendLog stores a log line (keeping the last maxLogLines) and tells the
 // publisher that the log changed, unless the channel has been permanently shut
-// down. It never blocks on the web UI.
+// down. It never blocks on the web UI. Used for high-frequency progress lines.
 func (ch *Channel) sendLog(msg string) {
+	if ch.storeLog(msg) {
+		signal(ch.LogCh)
+	}
+}
+
+// sendLogUrgent is sendLog for lines the user is waiting to read ("channel
+// resumed", errors...): they are not held back by the progress cool-down.
+func (ch *Channel) sendLogUrgent(msg string) {
+	if ch.storeLog(msg) {
+		ch.urgent[2].Store(true)
+		signal(ch.LogCh)
+	}
+}
+
+// storeLog appends msg to the log kept for the web UI; false if the channel
+// has been permanently shut down.
+func (ch *Channel) storeLog(msg string) bool {
 	select {
 	case <-ch.done:
-		return
+		return false
 	default:
 	}
 
@@ -416,8 +485,7 @@ func (ch *Channel) sendLog(msg string) {
 		ch.Logs = ch.Logs[len(ch.Logs)-maxLogLines:]
 	}
 	ch.logsMu.Unlock()
-
-	signal(ch.LogCh)
+	return true
 }
 
 // waitForMonitorStop blocks until the current monitor run has finished cleanup.
