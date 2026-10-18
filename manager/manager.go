@@ -18,13 +18,12 @@ import (
 	"github.com/HeapOfChaos/goondvr/notifier"
 	"github.com/HeapOfChaos/goondvr/router/view"
 	"github.com/HeapOfChaos/goondvr/server"
-	"github.com/r3labs/sse/v2"
 )
 
 // Manager is responsible for managing channels and their states.
 type Manager struct {
 	Channels sync.Map
-	SSE      *sse.Server
+	hub      *hub // Server-Sent Events to the web UI (see hub.go)
 
 	startTime  time.Time
 	cfBlocksMu sync.Mutex
@@ -43,43 +42,27 @@ type filenamePatternData struct {
 	Sequence int
 }
 
-// New initializes a new Manager instance with an SSE server.
+// New initializes a new Manager instance with an SSE hub for the web UI.
 func New() (*Manager, error) {
-
-	server := sse.New()
-	server.SplitData = true
-	// Every event is a full snapshot of a channel's state, so a late event
-	// replaces an earlier one. A small queue keeps the backlog of a slow
-	// browser short (instead of ~1000 stale events to replay when it wakes up);
-	// anything that does not fit is dropped by TryPublish and re-sent later.
-	server.BufferSize = sseBufferSize
-
-	updateStream := server.CreateStream("updates")
-	updateStream.AutoReplay = false
-
-	m := &Manager{SSE: server}
+	m := &Manager{hub: newHub()}
 	m.startTime = time.Now()
 	m.cfBlocks = make(map[string]time.Time)
 	go m.diskMonitor()
 
-	// Send a heartbeat event every 30s so browsers can detect a stale connection
-	// and the SSE extension will reconnect automatically.
+	// Keep-alive for the SSE connections. It is an SSE *comment*: browsers ignore
+	// it, but dead connections are noticed and proxies keep the stream open. (It
+	// used to be an event without data, which made the SSE library end every
+	// browser's response every 30 s.)
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
 		for range ticker.C {
-			server.TryPublish("updates", &sse.Event{
-				Event: []byte("heartbeat"),
-				Data:  []byte(""),
-			})
+			m.hub.comment(hubKeepAliveText)
 		}
 	}()
 
 	return m, nil
 }
-
-// sseBufferSize is the size of the SSE event queue (see New).
-const sseBufferSize = 64
 
 // settingsFile is the path to the persisted global settings file.
 const settingsFile = "./conf/settings.json"
@@ -617,45 +600,66 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	return channels
 }
 
-// Publish sends an SSE event for the given channel to the web UI.
+// Publish sends an SSE event for the given channel to every connected browser.
 //
-// It never blocks: when the SSE queue is full (a browser that stopped reading)
-// the event is dropped and false is returned so the caller can retry with a
-// fresh snapshot later. Blocking here used to freeze the recording loop of
-// every channel as soon as one browser tab got stuck.
+// It never blocks: each browser has its own queue and one that cannot keep up
+// is disconnected (it reconnects and gets the current state), see hub.go.
+// Blocking here used to freeze the recording loop of every channel as soon as
+// one browser tab got stuck. The result is always true (there is nothing to
+// retry); it is kept for the server.IManager interface.
 func (m *Manager) Publish(evt entity.Event, info *entity.ChannelInfo) bool {
+	msg, err := renderEvent(evt, info)
+	if err != nil {
+		fmt.Println("Error executing template:", err)
+		return true // retrying would fail the same way
+	}
+	m.hub.publish(msg)
+	return true
+}
+
+// renderEvent builds the SSE message of one kind of update for one channel.
+func renderEvent(evt entity.Event, info *entity.ChannelInfo) (hubMessage, error) {
 	switch evt {
 	case entity.EventUpdate:
 		var b bytes.Buffer
 		for _, mode := range []string{"expanded", "grid", "collapsed"} {
 			if err := view.InfoTpl.ExecuteTemplate(&b, "channel_details", withViewMode(info, mode)); err != nil {
-				fmt.Println("Error executing template:", err)
-				return true // retrying would fail the same way
+				return hubMessage{}, err
 			}
 		}
-		return m.SSE.TryPublish("updates", &sse.Event{
-			Event: []byte(info.ChannelID + "-info"),
-			Data:  b.Bytes(),
-		})
+		return hubMessage{event: info.ChannelID + "-info", data: b.Bytes()}, nil
 	case entity.EventThumb:
 		var b bytes.Buffer
 		for _, mode := range []string{"expanded", "grid", "collapsed"} {
 			if err := view.InfoTpl.ExecuteTemplate(&b, "channel_thumb", withViewMode(info, mode)); err != nil {
-				fmt.Println("Error executing template:", err)
-				return true // retrying would fail the same way
+				return hubMessage{}, err
 			}
 		}
-		return m.SSE.TryPublish("updates", &sse.Event{
-			Event: []byte(info.ChannelID + "-thumb"),
-			Data:  b.Bytes(),
-		})
+		return hubMessage{event: info.ChannelID + "-thumb", data: b.Bytes()}, nil
 	case entity.EventLog:
-		return m.SSE.TryPublish("updates", &sse.Event{
-			Event: []byte(info.ChannelID + "-log"),
-			Data:  []byte(strings.Join(info.Logs, "\n")),
-		})
+		return hubMessage{event: info.ChannelID + "-log", data: []byte(strings.Join(info.Logs, "\n"))}, nil
 	}
-	return true
+	return hubMessage{}, fmt.Errorf("unknown event %q", evt)
+}
+
+// snapshot renders the current card, thumbnail and log of every channel. A
+// browser that reconnects receives it first, so whatever it missed while it was
+// disconnected (or too slow) is replaced by the current state.
+func (m *Manager) snapshot() []hubMessage {
+	var msgs []hubMessage
+	m.Channels.Range(func(_, value any) bool {
+		info := value.(*channel.Channel).ExportInfo()
+		for _, evt := range []entity.Event{entity.EventUpdate, entity.EventThumb, entity.EventLog} {
+			msg, err := renderEvent(evt, info)
+			if err != nil {
+				fmt.Println("Error executing template:", err)
+				break
+			}
+			msgs = append(msgs, msg)
+		}
+		return true
+	})
+	return msgs
 }
 
 func withViewMode(info *entity.ChannelInfo, mode string) *entity.ChannelInfo {
@@ -664,9 +668,9 @@ func withViewMode(info *entity.ChannelInfo, mode string) *entity.ChannelInfo {
 	return &cp
 }
 
-// Subscriber handles SSE subscriptions for the specified channel.
+// Subscriber serves one browser's SSE connection until it goes away.
 func (m *Manager) Subscriber(w http.ResponseWriter, r *http.Request) {
-	m.SSE.ServeHTTP(w, r)
+	m.hub.serve(w, r, m.snapshot)
 }
 
 // GetChannelThumb returns the current summary card image URL for the given username.
