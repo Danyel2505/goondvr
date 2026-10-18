@@ -136,3 +136,52 @@ func TestPublishIsRetriedWhenQueueIsFull(t *testing.T) {
 		t.Fatal("update refused by a full queue was never retried")
 	}
 }
+
+// Pause must cancel the context of the run that is currently active, whatever
+// the monitor is doing at that moment (including its very first network call).
+func TestPauseCancelsTheRunningMonitor(t *testing.T) {
+	ui := &fakeUI{pushes: map[string]int{}}
+	ch := newTestChannel(t, ui, time.Millisecond)
+
+	ch.monitorMu.Lock()
+	ch.startMonitorLocked()
+	ch.monitorMu.Unlock()
+	ctx := ch.runContext()
+	if ctx.Err() != nil {
+		t.Fatal("fresh run context is already cancelled")
+	}
+
+	ch.Pause()
+
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("Pause did not cancel the context of the running monitor")
+	}
+}
+
+// A run that follows a Pause must not inherit the cancelled context of the
+// previous one (otherwise a resumed channel would stop immediately).
+func TestEachRunGetsItsOwnContext(t *testing.T) {
+	ui := &fakeUI{pushes: map[string]int{}}
+	ch := newTestChannel(t, ui, time.Millisecond)
+
+	ch.monitorMu.Lock()
+	ch.startMonitorLocked()
+	ch.monitorMu.Unlock()
+	first := ch.runContext()
+
+	ch.Pause()
+
+	ch.monitorMu.Lock()
+	ch.startMonitorLocked()
+	ch.monitorMu.Unlock()
+	second := ch.runContext()
+
+	if first.Err() == nil {
+		t.Fatal("first run was not cancelled by Pause")
+	}
+	if second.Err() != nil {
+		t.Fatal("second run starts with an already cancelled context")
+	}
+}

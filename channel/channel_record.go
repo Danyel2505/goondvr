@@ -31,6 +31,10 @@ func resolveSite(siteName string) site.Site {
 func (ch *Channel) Monitor(runID uint64) {
 	defer ch.finishMonitor()
 
+	// Context of this run, created when the run was started: Pause/Stop cancel
+	// it, and every network call below honours it.
+	ctx := ch.runContext()
+
 	s := resolveSite(ch.Config.Site)
 	req := internal.NewReq()
 	ch.Info("starting to record `%s`", ch.Config.Username)
@@ -40,18 +44,13 @@ func (ch *Channel) Monitor(runID uint64) {
 
 	// Seed StreamedAt from the site API if we haven't seen this channel stream yet.
 	if ch.StreamedAt == 0 {
-		if ts, err := s.FetchLastBroadcast(context.Background(), req, ch.Config.Username); err == nil && ts > 0 {
+		if ts, err := s.FetchLastBroadcast(ctx, req, ch.Config.Username); err == nil && ts > 0 {
 			ch.StreamedAt = ts
 			ch.Config.StreamedAt = ts
 			_ = server.Manager.SaveConfig()
 			ch.Update()
 		}
 	}
-
-	// Create a new context with a cancel function,
-	// the CancelFunc will be stored in the channel's CancelFunc field
-	// and will be called by `Pause` or `Stop` functions
-	ctx, _ := ch.WithCancel(context.Background())
 
 	var err error
 	for {

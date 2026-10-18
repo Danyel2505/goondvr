@@ -25,8 +25,6 @@ const maxLogLines = 100
 
 // Channel represents a channel instance.
 type Channel struct {
-	CancelFunc context.CancelFunc
-
 	// LogCh, UpdateCh and ThumbCh are "something changed" signals for the
 	// Publisher. They hold at most one pending signal and are written with a
 	// non-blocking send (see signal), so neither the recording loop nor the
@@ -61,6 +59,8 @@ type Channel struct {
 	finalizeWG              sync.WaitGroup
 	finalizeCount           int
 	monitorMu               sync.Mutex
+	monitorCtx              context.Context    // context of the current monitor run (created by startMonitorLocked)
+	monitorCancel           context.CancelFunc // cancels monitorCtx; both guarded by monitorMu
 	monitorRunning          bool
 	monitorRestartRequested bool
 	monitorRunID            uint64
@@ -81,7 +81,7 @@ func New(conf *entity.ChannelConfig) *Channel {
 		done:             make(chan struct{}),
 		publisherExited:  make(chan struct{}),
 		Config:           conf,
-		CancelFunc:       func() {},
+		monitorCancel:    func() {},
 		RoomTitle:        conf.RoomTitle,
 		Gender:           conf.Gender,
 		SummaryCardImage: conf.SummaryCardImage,
@@ -167,15 +167,6 @@ func (ch *Channel) Publisher() {
 	}
 }
 
-// WithCancel creates a new context with a cancel function,
-// then stores the cancel function in the channel's CancelFunc field.
-//
-// This is used to cancel the context when the channel is stopped or paused.
-func (ch *Channel) WithCancel(ctx context.Context) (context.Context, context.CancelFunc) {
-	ctx, ch.CancelFunc = context.WithCancel(ctx)
-	return ctx, ch.CancelFunc
-}
-
 // Info logs an informational message to both the browser log and stdout.
 func (ch *Channel) Info(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
@@ -233,7 +224,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	return &entity.ChannelInfo{
 		ChannelID:        entity.ChannelID(ch.Config.Site, ch.Config.Username),
 		IsOnline:         ch.IsOnline,
-		IsPaused:         ch.Config.IsPaused,
+		IsPaused:         ch.isPaused(), // Pause/Resume write it under monitorMu
 		Username:         ch.Config.Username,
 		MaxDuration:      internal.FormatDuration(float64(ch.Config.MaxDuration * 60)), // MaxDuration from config is in minutes
 		MaxFilesize:      internal.FormatFilesize(ch.Config.MaxFilesize * 1024 * 1024), // MaxFilesize from config is in MB
@@ -263,8 +254,9 @@ func (ch *Channel) Pause() {
 	ch.monitorMu.Lock()
 	ch.monitorRestartRequested = false
 	ch.Config.IsPaused = true
+	cancel := ch.monitorCancel
 	ch.monitorMu.Unlock()
-	ch.CancelFunc()
+	cancel()
 
 	ch.Update()
 	ch.Info("channel paused")
@@ -276,8 +268,9 @@ func (ch *Channel) Stop() {
 	ch.monitorMu.Lock()
 	ch.monitorRestartRequested = false
 	ch.Config.IsPaused = true
+	cancel := ch.monitorCancel
 	ch.monitorMu.Unlock()
-	ch.CancelFunc()
+	cancel()
 	ch.waitForMonitorStop()
 	ch.waitForFinalizations()
 
@@ -291,7 +284,18 @@ func (ch *Channel) Stop() {
 // It's only be used when program starting and trying to resume all channels at once.
 func (ch *Channel) Resume(startSeq int) {
 	go func() {
-		<-time.After(time.Duration(startSeq) * time.Second)
+		if startSeq > 0 {
+			select {
+			case <-time.After(time.Duration(startSeq) * time.Second):
+			case <-ch.done: // channel was removed while waiting for its turn
+				return
+			}
+			// The user may have paused the channel while it was waiting for its
+			// turn; starting it now would silently undo that.
+			if ch.isPaused() {
+				return
+			}
+		}
 		runID, ok := ch.requestMonitorStart()
 		if !ok {
 			return
@@ -362,12 +366,30 @@ func (ch *Channel) finishMonitor() {
 // startMonitorLocked marks a monitor as active and allocates a new run ID.
 // monitorMu must already be held by the caller.
 func (ch *Channel) startMonitorLocked() uint64 {
+	// A fresh context for every run, created here (not later inside Monitor) so
+	// that a Pause arriving at any moment after the start cancels *this* run.
+	ch.monitorCancel() // release the previous run's context
+	ch.monitorCtx, ch.monitorCancel = context.WithCancel(context.Background())
 	ch.Config.IsPaused = false
 	ch.monitorRunning = true
 	ch.monitorRestartRequested = false
 	ch.monitorDone = make(chan struct{})
 	ch.monitorRunID++
 	return ch.monitorRunID
+}
+
+// isPaused reports whether the channel is currently paused.
+func (ch *Channel) isPaused() bool {
+	ch.monitorMu.Lock()
+	defer ch.monitorMu.Unlock()
+	return ch.Config.IsPaused
+}
+
+// runContext returns the context of the current monitor run.
+func (ch *Channel) runContext() context.Context {
+	ch.monitorMu.Lock()
+	defer ch.monitorMu.Unlock()
+	return ch.monitorCtx
 }
 
 // stopPublisher signals the publisher goroutine to exit. It is only used when
