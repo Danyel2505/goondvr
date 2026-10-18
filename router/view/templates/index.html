@@ -666,6 +666,20 @@
             // SSE re-inits reuse this so they don't fire a new network request.
             const liveThumbCache = {};
 
+            // Connection to the event stream (used by the htmx SSE extension).
+            // The first connection of this page needs nothing special: the page was
+            // just rendered. When htmx has to create the connection again (after an
+            // error) it asks the server for the current state of every channel with
+            // ?resync=1, because events published meanwhile were not received. (The
+            // browser's own automatic reconnect is recognised by the server through
+            // the Last-Event-ID header.)
+            let sseConnections = 0;
+            htmx.createEventSource = function (url) {
+                const again = sseConnections++ > 0;
+                const target = again ? url + (url.indexOf('?') >= 0 ? '&' : '?') + 'resync=1' : url;
+                return new EventSource(target, { withCredentials: true });
+            };
+
             // View currently on screen. Every channel is rendered three times
             // (expanded / grid / collapsed) but only one copy is ever visible, so
             // thumbnails, marquees and logs are only maintained for that one.
@@ -913,19 +927,76 @@
                 if (!btn.dataset.originalLabel) {
                     btn.dataset.originalLabel = btn.textContent.trim();
                 }
+                if (btn.dataset.originalHtml === undefined) {
+                    btn.dataset.originalHtml = btn.innerHTML; // keeps the icon
+                }
                 btn.textContent = btn.dataset.pendingLabel;
             });
+
+            function restoreButton(btn) {
+                if (btn.dataset.originalHtml !== undefined) {
+                    btn.innerHTML = btn.dataset.originalHtml;
+                } else if (btn.dataset.originalLabel) {
+                    btn.textContent = btn.dataset.originalLabel;
+                }
+                btn.disabled = false;
+            }
 
             document.body.addEventListener("htmx:afterRequest", function (e) {
                 const btn = e.detail && e.detail.elt && e.detail.elt.matches('button[data-pending-label]')
                     ? e.detail.elt
                     : null;
                 if (!btn) return;
-                if (e.detail.failed && btn.dataset.originalLabel) {
-                    btn.textContent = btn.dataset.originalLabel;
-                    btn.disabled = false;
+                if (e.detail.failed) {
+                    restoreButton(btn);
+                } else {
+                    watchPendingButton(btn);
                 }
             });
+
+            // After a successful Pause/Resume the card is redrawn by the event
+            // stream, normally within a fraction of a second, which replaces the
+            // button. If the button is still there after a few seconds that update
+            // never arrived (connection hiccup): fetch the current state instead of
+            // leaving "Resuming..." on screen for ever.
+            function watchPendingButton(btn) {
+                setTimeout(async function () {
+                    if (!document.body.contains(btn)) return; // redrawn: the normal case
+                    await resyncCards();
+                    if (document.body.contains(btn)) restoreButton(btn); // state unchanged
+                }, 4000);
+            }
+
+            // Brings every card up to date from a freshly rendered copy of the page.
+            // Used as a safety net only; the event stream does this normally.
+            let lastResyncAt = 0;
+            async function resyncCards() {
+                if (Date.now() - lastResyncAt < 3000) return;
+                lastResyncAt = Date.now();
+                try {
+                    const resp = await fetch('/', { cache: 'no-store', headers: { 'Accept': 'text/html' } });
+                    if (!resp.ok) return;
+                    const fresh = new DOMParser().parseFromString(await resp.text(), 'text/html');
+                    fresh.querySelectorAll('[sse-swap]').forEach(function (src) {
+                        const id = src.getAttribute('sse-swap');
+                        const dst = document.querySelector('[sse-swap="' + id + '"]');
+                        if (!dst) return; // channel added/removed elsewhere: a page load handles that
+                        if (id.endsWith('-log')) {
+                            const box = dst.closest('.ts-box');
+                            const auto = box && box.querySelector('[type=checkbox]');
+                            if (auto && !auto.checked) return;
+                            if (currentView === 'expanded') writeLog(dst, src.value);
+                            else pendingLogs.set(dst, src.value);
+                            return;
+                        }
+                        dst.innerHTML = src.innerHTML;
+                        htmx.process(dst);
+                        if (id.endsWith('-info')) initMarquees(dst);
+                        else if (id.endsWith('-thumb')) initThumbSwitchers(dst);
+                    });
+                    scheduleStats();
+                } catch (err) { /* offline: the next reconnect resyncs */ }
+            }
 
             function handleDeleteSubmit(form, message) {
                 if (!confirm(message)) return false;
