@@ -119,7 +119,10 @@ func (ch *Channel) generateFilenameLocked() (string, error) {
 	}
 
 	// Get the current time based on the Unix timestamp when the stream was started
-	t := time.Unix(ch.StreamedAt, 0)
+	ch.stateMu.RLock()
+	streamedAt := ch.StreamedAt
+	ch.stateMu.RUnlock()
+	t := time.Unix(streamedAt, 0)
 	pattern := &Pattern{
 		Username: ch.Config.Username,
 		Site:     ch.Config.Site,

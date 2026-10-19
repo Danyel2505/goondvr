@@ -18,6 +18,16 @@ type StreamInfo struct {
 	MouflonPDKey     string // Stripchat MOUFLON v2 decryption key; empty if not applicable
 }
 
+// LiveThumbSource is implemented by sites whose live preview address is a
+// snapshot that goes out of date: the preview only changes if the site is asked
+// for the address of a newer one. (Sites whose preview address never changes,
+// such as Chaturbate, do not implement it.)
+type LiveThumbSource interface {
+	// FetchLiveThumbURL returns the address of the latest live preview. It must
+	// be cheap: it is called about once a minute for every channel on screen.
+	FetchLiveThumbURL(ctx context.Context, req *internal.Req, username string) (string, error)
+}
+
 // Site defines the interface a streaming platform must implement.
 type Site interface {
 	// FetchStream returns StreamInfo if the channel is live, nil if offline.

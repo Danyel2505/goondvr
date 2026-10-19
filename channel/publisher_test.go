@@ -16,10 +16,13 @@ type fakeUI struct {
 
 	mu      sync.Mutex
 	pushes  map[string]int
+	viewers bool          // answer to HasViewers
 	refuse  int           // refuse this many Publish calls (return false)
 	hang    chan struct{} // if set, Publish blocks until closed
 	lastLog []string
 }
+
+func (f *fakeUI) HasViewers() bool { return f.viewers }
 
 func (f *fakeUI) Publish(evt string, info *entity.ChannelInfo) bool {
 	if f.hang != nil {

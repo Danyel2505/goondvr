@@ -43,10 +43,15 @@ func (ch *Channel) Monitor(runID uint64) {
 	go ch.ScanTotalDiskUsage()
 
 	// Seed StreamedAt from the site API if we haven't seen this channel stream yet.
-	if ch.StreamedAt == 0 {
+	ch.stateMu.RLock()
+	needStreamedAt := ch.StreamedAt == 0
+	ch.stateMu.RUnlock()
+	if needStreamedAt {
 		if ts, err := s.FetchLastBroadcast(ctx, req, ch.Config.Username); err == nil && ts > 0 {
+			ch.stateMu.Lock()
 			ch.StreamedAt = ts
 			ch.Config.StreamedAt = ts
+			ch.stateMu.Unlock()
 			_ = server.Manager.SaveConfig()
 			ch.UpdateNow()
 		}
@@ -157,6 +162,7 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 	changed := false
 	thumbChanged := false
 	if streamInfo != nil {
+		ch.stateMu.Lock()
 		if streamInfo.RoomTitle != "" && streamInfo.RoomTitle != ch.RoomTitle {
 			ch.RoomTitle = streamInfo.RoomTitle
 			ch.Config.RoomTitle = streamInfo.RoomTitle
@@ -173,6 +179,7 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 			changed = true
 			thumbChanged = true
 		}
+		ch.stateMu.Unlock()
 		if changed {
 			_ = server.Manager.SaveConfig()
 			if thumbChanged {
@@ -190,13 +197,14 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 		return fmt.Errorf("get stream: %w", internal.ErrChannelOffline)
 	}
 
+	ch.stateMu.Lock()
 	ch.StreamedAt = time.Now().Unix()
 	ch.Config.StreamedAt = ch.StreamedAt
+	ch.NumViewers = streamInfo.NumViewers
+	ch.stateMu.Unlock()
 	_ = server.Manager.SaveConfig()
 	ch.Sequence = 0
-	ch.NumViewers = streamInfo.NumViewers
-	if ch.LiveThumbURL != streamInfo.LiveThumbURL {
-		ch.LiveThumbURL = streamInfo.LiveThumbURL
+	if ch.setLiveThumbURL(streamInfo.LiveThumbURL) {
 		ch.UpdateThumb()
 	}
 
@@ -219,6 +227,13 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 
 	ch.UpdateOnlineStatus(true) // Update online status after playlist is OK
 
+	// The preview address of some sites is a snapshot: keep asking for a newer one.
+	if src, ok := s.(site.LiveThumbSource); ok && streamInfo.LiveThumbURL != "" {
+		thumbCtx, stopThumbs := context.WithCancel(ctx)
+		defer stopThumbs()
+		go ch.keepLiveThumbFresh(thumbCtx, src)
+	}
+
 	// Reset CF state on successful stream start.
 	ch.CFBlockCount = 0
 	notifier.Default.ResetCooldown(fmt.Sprintf(notifier.KeyCFChannel, ch.Config.Username))
@@ -226,7 +241,9 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 	// Notify stream online if enabled.
 	if server.Config.NotifyStreamOnline {
 		title := fmt.Sprintf("📡 %s is live!", ch.Config.Username)
+		ch.stateMu.RLock()
 		body := ch.RoomTitle
+		ch.stateMu.RUnlock()
 		if body == "" {
 			body = ch.Config.Username
 		}

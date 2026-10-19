@@ -97,6 +97,21 @@ func (s *Stripchat) FetchStream(ctx context.Context, req *internal.Req, username
 	return nil, err
 }
 
+// FetchLiveThumbURL implements site.LiveThumbSource. It asks only the light
+// cam API (never the browser fallback of FetchStream) for the address of the
+// newest preview snapshot.
+func (s *Stripchat) FetchLiveThumbURL(ctx context.Context, req *internal.Req, username string) (string, error) {
+	info, err := fetchStreamViaLegacyAPI(ctx, req, username)
+	if info != nil && info.LiveThumbURL != "" &&
+		(err == nil || errors.Is(err, internal.ErrChannelOffline) || errors.Is(err, internal.ErrPrivateStream)) {
+		return info.LiveThumbURL, nil
+	}
+	if err == nil {
+		err = fmt.Errorf("stripchat: no live preview address")
+	}
+	return "", err
+}
+
 func fetchStreamViaLegacyAPI(ctx context.Context, req *internal.Req, username string) (*site.StreamInfo, error) {
 	apiURL := fmt.Sprintf("https://stripchat.com/api/front/v2/models/username/%s/cam", username)
 

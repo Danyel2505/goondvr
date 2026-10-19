@@ -66,10 +66,19 @@ type Channel struct {
 	logsMu sync.RWMutex
 	Logs   []string
 
-	fileMu                  sync.RWMutex
-	finalizeMu              sync.Mutex
-	finalizeWG              sync.WaitGroup
-	finalizeCount           int
+	fileMu        sync.RWMutex
+	finalizeMu    sync.Mutex
+	finalizeWG    sync.WaitGroup
+	finalizeCount int
+	// stateMu guards the state that the recording goroutine updates while the
+	// web UI and the config writer read it: IsOnline, StreamedAt, RoomTitle,
+	// Gender, NumViewers, EdgeRegion, SummaryCardImage, LiveThumbURL and the
+	// copies of RoomTitle/Gender/SummaryCardImage/StreamedAt kept in Config.
+	// Config.IsPaused is guarded by monitorMu instead.
+	//
+	// Lock order: fileMu -> monitorMu -> stateMu. Nothing is called while
+	// stateMu is held.
+	stateMu                 sync.RWMutex
 	monitorMu               sync.Mutex
 	monitorCtx              context.Context    // context of the current monitor run (created by startMonitorLocked)
 	monitorCancel           context.CancelFunc // cancels monitorCtx; both guarded by monitorMu
@@ -229,9 +238,14 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	filesize := ch.Filesize
 	totalDiskUsageBytes := ch.TotalDiskUsageBytes
 	ch.fileMu.RUnlock()
+	ch.stateMu.RLock()
+	isOnline, roomTitle, gender, numViewers := ch.IsOnline, ch.RoomTitle, ch.Gender, ch.NumViewers
+	edgeRegion, summaryCard, liveThumb := ch.EdgeRegion, ch.SummaryCardImage, ch.LiveThumbURL
+	streamedAtUnix := ch.StreamedAt
+	ch.stateMu.RUnlock()
 	var streamedAt string
-	if ch.StreamedAt != 0 {
-		streamedAt = time.Unix(ch.StreamedAt, 0).Format("2006-01-02 15:04 AM")
+	if streamedAtUnix != 0 {
+		streamedAt = time.Unix(streamedAtUnix, 0).Format("2006-01-02 15:04 AM")
 	}
 	ch.logsMu.RLock()
 	logs := make([]string, len(ch.Logs))
@@ -250,7 +264,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 
 	return &entity.ChannelInfo{
 		ChannelID:        entity.ChannelID(ch.Config.Site, ch.Config.Username),
-		IsOnline:         ch.IsOnline,
+		IsOnline:         isOnline,
 		IsPaused:         ch.isPaused(), // Pause/Resume write it under monitorMu
 		Username:         ch.Config.Username,
 		MaxDuration:      internal.FormatDuration(float64(ch.Config.MaxDuration * 60)), // MaxDuration from config is in minutes
@@ -263,12 +277,12 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		Filename:         filename,
 		Logs:             logs,
 		GlobalConfig:     server.Config,
-		RoomTitle:        ch.RoomTitle,
-		Gender:           ch.Gender,
-		NumViewers:       ch.NumViewers,
-		EdgeRegion:       ch.EdgeRegion,
-		SummaryCardImage: ch.SummaryCardImage,
-		LiveThumbURL:     ch.LiveThumbURL,
+		RoomTitle:        roomTitle,
+		Gender:           gender,
+		NumViewers:       numViewers,
+		EdgeRegion:       edgeRegion,
+		SummaryCardImage: summaryCard,
+		LiveThumbURL:     liveThumb,
 		Site:             site,
 		SiteDomain:       siteDomain,
 	}
@@ -341,10 +355,12 @@ func (ch *Channel) Resume(startSeq int) {
 
 // UpdateOnlineStatus updates the online status of the channel.
 func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
+	ch.stateMu.Lock()
 	ch.IsOnline = isOnline
 	if !isOnline {
 		ch.NumViewers = 0
 	}
+	ch.stateMu.Unlock()
 	ch.UpdateThumb()
 	ch.UpdateNow()
 }
@@ -523,4 +539,39 @@ func (ch *Channel) waitForFinalizations() int {
 		ch.finalizeWG.Wait()
 	}
 	return pending
+}
+
+// Online reports whether the channel is online (recording).
+func (ch *Channel) Online() bool {
+	ch.stateMu.RLock()
+	defer ch.stateMu.RUnlock()
+	return ch.IsOnline
+}
+
+// GetSummaryCardImage returns the address of the channel's profile picture.
+func (ch *Channel) GetSummaryCardImage() string {
+	ch.stateMu.RLock()
+	defer ch.stateMu.RUnlock()
+	return ch.SummaryCardImage
+}
+
+// Paused reports whether the channel is paused.
+func (ch *Channel) Paused() bool { return ch.isPaused() }
+
+// SetPaused sets the paused flag without starting or stopping anything. Shutdown
+// uses it to save the state the user had chosen, after Stop marked every channel paused.
+func (ch *Channel) SetPaused(v bool) {
+	ch.monitorMu.Lock()
+	ch.Config.IsPaused = v
+	ch.monitorMu.Unlock()
+}
+
+// ConfigSnapshot returns a consistent copy of the channel's configuration, for
+// saving it while the recording goroutine keeps updating it.
+func (ch *Channel) ConfigSnapshot() entity.ChannelConfig {
+	ch.monitorMu.Lock()
+	defer ch.monitorMu.Unlock()
+	ch.stateMu.RLock()
+	defer ch.stateMu.RUnlock()
+	return *ch.Config
 }

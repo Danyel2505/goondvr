@@ -27,6 +27,9 @@ type IManager interface {
 	ReportCFBlock(username string)
 	ResetCFBlock(username string)
 	GetStats() StatsResponse
+	// HasViewers reports whether any browser has the web UI open, so that work
+	// done only for the sake of the UI (renewing previews) can be skipped.
+	HasViewers() bool
 }
 
 // StatsResponse holds system stats returned by the /api/stats endpoint.

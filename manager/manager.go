@@ -409,7 +409,8 @@ func (m *Manager) SaveConfig() error {
 	var config []*entity.ChannelConfig
 
 	m.Channels.Range(func(key, value any) bool {
-		config = append(config, value.(*channel.Channel).Config)
+		snap := value.(*channel.Channel).ConfigSnapshot() // a copy: recording goroutines keep updating the live one
+		config = append(config, &snap)
 		return true
 	})
 
@@ -668,6 +669,11 @@ func withViewMode(info *entity.ChannelInfo, mode string) *entity.ChannelInfo {
 	return &cp
 }
 
+// HasViewers reports whether any browser is connected to the web UI.
+func (m *Manager) HasViewers() bool {
+	return m.hub.count() > 0
+}
+
 // Subscriber serves one browser's SSE connection until it goes away.
 func (m *Manager) Subscriber(w http.ResponseWriter, r *http.Request) {
 	m.hub.serve(w, r, m.snapshot)
@@ -680,7 +686,7 @@ func (m *Manager) GetChannelThumb(channelID string) string {
 	if !ok {
 		return ""
 	}
-	return val.(*channel.Channel).SummaryCardImage
+	return val.(*channel.Channel).GetSummaryCardImage()
 }
 
 // GetChannelLiveThumb returns the live-updating thumbnail URL for the given username.
@@ -691,7 +697,7 @@ func (m *Manager) GetChannelLiveThumb(channelID string) string {
 	if !ok {
 		return ""
 	}
-	return val.(*channel.Channel).LiveThumbURL
+	return val.(*channel.Channel).GetLiveThumbURL()
 }
 
 // Shutdown gracefully stops all active channels, saves config, and waits for
@@ -699,9 +705,9 @@ func (m *Manager) GetChannelLiveThumb(channelID string) string {
 func (m *Manager) Shutdown() {
 	m.Channels.Range(func(key, value any) bool {
 		ch := value.(*channel.Channel)
-		wasPaused := ch.Config.IsPaused
+		wasPaused := ch.Paused()
 		ch.Stop()
-		ch.Config.IsPaused = wasPaused
+		ch.SetPaused(wasPaused)
 		return true
 	})
 	// Persist channel list so the web UI restores them on next start.
@@ -749,7 +755,7 @@ func (m *Manager) GetStats() server.StatsResponse {
 
 	count := 0
 	m.Channels.Range(func(_, v any) bool {
-		if v.(*channel.Channel).IsOnline {
+		if v.(*channel.Channel).Online() {
 			count++
 		}
 		return true

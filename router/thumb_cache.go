@@ -17,7 +17,7 @@ import (
 
 const (
 	cardThumbTTL = 5 * time.Minute  // profile / summary-card image
-	liveThumbTTL = 30 * time.Second // live preview snapshot
+	liveThumbTTL = 20 * time.Second // live preview snapshot (the page renews it every 30 s)
 
 	thumbCacheMaxEntries = 256
 	thumbCacheMaxBytes   = 32 << 20 // 32 MiB
