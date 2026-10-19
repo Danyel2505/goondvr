@@ -24,9 +24,9 @@ import (
 //
 // (Variables only so that tests can shorten them.)
 var (
-	availCycle        = 120 * time.Second
-	availMinSpacing   = 1500 * time.Millisecond
-	availMaxSpacing   = 10 * time.Second
+	availCycle        = 60 * time.Second
+	availMinSpacing   = 1200 * time.Millisecond
+	availMaxSpacing   = 6 * time.Second
 	availFirstSpacing = 700 * time.Millisecond // between channels never probed yet
 	availIdlePoll     = 5 * time.Second        // how often it checks for a browser / work when idle
 	availMaxBlock     = 10 * time.Minute

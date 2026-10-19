@@ -2,7 +2,6 @@ package manager
 
 import (
 	"testing"
-	"time"
 )
 
 func TestProbeSpacingStaysLightAndAdapts(t *testing.T) {
@@ -15,12 +14,12 @@ func TestProbeSpacingStaysLightAndAdapts(t *testing.T) {
 	if d := probeSpacing(2, false); d != availMaxSpacing {
 		t.Fatalf("2 paused channels: never slower than %v, got %v", availMaxSpacing, d)
 	}
-	d := probeSpacing(60, false)
+	d := probeSpacing(40, false)
 	if d < availMinSpacing || d > availMaxSpacing {
-		t.Fatalf("60 channels: %v out of bounds", d)
+		t.Fatalf("40 channels: %v out of bounds", d)
 	}
-	if round := d * 60; round < 100*time.Second || round > 140*time.Second {
-		t.Fatalf("60 channels: a full round takes %v, want about %v", round, availCycle)
+	if round := d * 40; round < availCycle || round > availCycle*3/2 {
+		t.Fatalf("40 channels: a full round takes %v, want about %v", round, availCycle)
 	}
 	if d := probeSpacing(0, false); d <= 0 {
 		t.Fatalf("no channels: spacing %v", d)

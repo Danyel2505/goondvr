@@ -1075,6 +1075,7 @@
             function deliverCard(elt, data) {
                 const id = elt.getAttribute('sse-swap') || '';
                 elt._updatedAt = Date.now(); // lets watchPendingButton know that the server reported this card
+                if (id.endsWith('-info')) noteRank(elt, data); // the card may have to change place, seen or not
                 if (id.endsWith('-log')) {
                     const box = elt.closest('.ts-box');
                     const autoUpdate = box && box.querySelector('[type=checkbox]');
@@ -1097,6 +1098,161 @@
 
             function flushVisibleCards() {
                 Array.from(pendingCards.keys()).forEach(elt => { if (isCardVisible(elt)) applyPendingCard(elt); });
+            }
+
+            // ---- Live order of the list --------------------------------------------
+            // The server numbers every card: 0 recording, 1 on air but not recorded,
+            // 2 the rest (data-rank, repeated in every card update). When the rank of a
+            // card changes, the list is re-ordered here without reloading the page. Only
+            // the cards that really change place are moved in the DOM (everything that can
+            // stay is found with the longest increasing subsequence), and the ones on
+            // screen glide to their new place: FLIP with the Web Animations API, i.e. only
+            // transforms, run by the compositor, nothing is laid out while they play.
+            // Nothing is animated that cannot be seen, and nothing moves while the user is
+            // scrolling, has just clicked, has a dialog open or is pointing at a button.
+            const channelsList = document.getElementById('channels-list');
+            const RANK_RE = /data-rank="(\d)"/;
+            const REORDER_DELAY_MS = 500;       // a burst of changes becomes one move
+            const REORDER_RETRY_MS = 400;       // look again while the user is busy
+            const REORDER_ANIM_MS = 380;
+            const REORDER_MAX_ANIMATED = 40;    // more than this: the rest just move
+            const reducedMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+            let reorderTimer = 0, reorderSince = 0;
+            let lastScrollAt = 0, lastPointerAt = 0;
+            let reorderAnims = [];
+
+            window.addEventListener('scroll', function () { lastScrollAt = Date.now(); }, { passive: true });
+            ['pointerdown', 'keydown'].forEach(function (type) {
+                window.addEventListener(type, function () { lastPointerAt = Date.now(); }, { passive: true, capture: true });
+            });
+            if (channelsList) {
+                Array.from(channelsList.children).forEach(function (box) { box._shownRank = Number(box.dataset.rank); });
+            }
+
+            function noteRank(elt, data) {
+                const m = RANK_RE.exec(data);
+                if (!m) return;
+                const box = elt.closest('.ts-box');
+                if (!box || box.dataset.rank === m[1]) return;
+                box.dataset.rank = m[1];
+                scheduleReorder(REORDER_DELAY_MS);
+            }
+
+            function scheduleReorder(delay) {
+                if (reorderTimer) return;
+                if (!reorderSince) reorderSince = Date.now();
+                reorderTimer = setTimeout(runReorder, delay);
+            }
+
+            function runReorder() {
+                reorderTimer = 0;
+                if (!channelsList) return;
+                const now = Date.now();
+                const busy = now - lastScrollAt < 300 || now - lastPointerAt < 1500 || !!document.querySelector('dialog[open]');
+                // A button under the pointer holds the move back, but not for ever.
+                const pointing = now - reorderSince < 8000 && !!channelsList.querySelector('button:hover, a:hover, input:hover');
+                if (busy || pointing) { scheduleReorder(REORDER_RETRY_MS); return; }
+                reorderSince = 0;
+                applyOrder();
+            }
+
+            function compareBoxes(a, b) {
+                const ra = Number(a.dataset.rank), rb = Number(b.dataset.rank);
+                if (ra !== rb) return ra - rb;
+                const ka = a.dataset.sort, kb = b.dataset.sort;
+                return ka < kb ? -1 : (ka > kb ? 1 : 0);
+            }
+
+            // The largest set of boxes that is already in the right relative order.
+            function boxesThatCanStay(seq) {
+                const tails = [], tailIdx = [], prev = new Array(seq.length);
+                for (let i = 0; i < seq.length; i++) {
+                    const v = seq[i]._target;
+                    let lo = 0, hi = tails.length;
+                    while (lo < hi) { const mid = (lo + hi) >> 1; if (tails[mid] < v) lo = mid + 1; else hi = mid; }
+                    tails[lo] = v; tailIdx[lo] = i;
+                    prev[i] = lo > 0 ? tailIdx[lo - 1] : -1;
+                }
+                const keep = new Set();
+                for (let i = tails.length ? tailIdx[tails.length - 1] : -1; i >= 0; i = prev[i]) keep.add(seq[i]);
+                return keep;
+            }
+
+            function applyOrder() {
+                const cur = Array.from(channelsList.children).filter(function (el) { return el.dataset && el.dataset.sort !== undefined; });
+                if (cur.length < 2) return;
+                const want = cur.slice().sort(compareBoxes);
+                want.forEach(function (b, i) { b._target = i; });
+                const keep = boxesThatCanStay(cur);
+                const improved = [];
+                cur.forEach(function (b) {
+                    const r = Number(b.dataset.rank);
+                    if (b._shownRank > r) improved.push(b);
+                    b._shownRank = r;
+                });
+                if (keep.size === cur.length) return; // already in order
+
+                reorderAnims.forEach(function (a) { a.cancel(); }); // jump to the end of a move still playing
+                reorderAnims = [];
+
+                // Positions before the move, only for what is on screen (or about to be).
+                const measure = !document.hidden;
+                const animate = measure && !reducedMotion.matches && typeof Element.prototype.animate === 'function';
+                const vh = window.innerHeight;
+                const before = new Map();
+                let anchor = null, anchorTop = 0;
+                if (measure) {
+                    const listTop = channelsList.getBoundingClientRect().top;
+                    for (let i = 0; i < cur.length; i++) {
+                        const r = cur[i].getBoundingClientRect();
+                        if (r.top >= 2 * vh) break;                // the rest is further down
+                        if (r.bottom <= -vh) continue;
+                        before.set(cur[i], r);
+                        // Keep what the user is looking at where it is, unless the start of the list is on screen.
+                        if (!anchor && listTop < 0 && r.bottom > 0 && keep.has(cur[i])) { anchor = cur[i]; anchorTop = r.top; }
+                    }
+                }
+
+                channelsList.style.overflowAnchor = 'none'; // the page compensates the scroll itself, below
+                let ref = null;
+                for (let k = want.length - 1; k >= 0; k--) {
+                    if (!keep.has(want[k])) channelsList.insertBefore(want[k], ref);
+                    ref = want[k];
+                }
+
+                if (measure) {
+                    if (anchor) {
+                        const d = anchor.getBoundingClientRect().top - anchorTop;
+                        if (Math.abs(d) > 0.5) window.scrollTo({ top: window.scrollY + d, behavior: 'instant' });
+                    }
+                    if (animate) {
+                        let animated = 0;
+                        for (let i = 0; i < want.length && animated < REORDER_MAX_ANIMATED; i++) {
+                            const b = want[i], r = b.getBoundingClientRect();
+                            if (r.top >= 2 * vh) break;
+                            if (r.bottom <= -vh) continue;
+                            const old = before.get(b);
+                            const opts = { duration: REORDER_ANIM_MS, easing: 'cubic-bezier(0.22, 0.8, 0.3, 1)' };
+                            if (old) {
+                                const dx = old.left - r.left, dy = old.top - r.top;
+                                if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+                                reorderAnims.push(b.animate([{ transform: 'translate(' + dx + 'px,' + dy + 'px)' }, { transform: 'none' }], opts));
+                                animated++;
+                            } else if (r.bottom > 0 && r.top < vh) { // came from far away: fade in instead of flying across the page
+                                reorderAnims.push(b.animate([{ opacity: 0, transform: 'translateY(-14px)' }, { opacity: 1, transform: 'none' }], opts));
+                                animated++;
+                            }
+                        }
+                        improved.forEach(function (b) { // a short green halo on the cards that moved up
+                            const r = b.getBoundingClientRect();
+                            if (r.bottom > 0 && r.top < vh) {
+                                reorderAnims.push(b.animate([{ boxShadow: '0 0 0 2px rgba(46,160,67,0.95)' }, { boxShadow: '0 0 0 0 rgba(46,160,67,0)' }],
+                                    { duration: 1400, easing: 'ease-out' }));
+                            }
+                        });
+                    }
+                }
+                channelsList.style.overflowAnchor = '';
             }
 
             // Every card update arrives here. htmx would parse and swap it for every
