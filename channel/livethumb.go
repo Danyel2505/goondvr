@@ -2,32 +2,34 @@ package channel
 
 import (
 	"context"
-	"hash/crc32"
+	"sync"
 	"time"
 
 	"github.com/HeapOfChaos/goondvr/internal"
-	"github.com/HeapOfChaos/goondvr/server"
 	"github.com/HeapOfChaos/goondvr/site"
 )
 
 // Live previews of sites whose preview address is a snapshot (Stripchat) go
-// out of date: the address is worked out once when the recording starts and
-// then keeps pointing at the same picture for hours. keepLiveThumbFresh asks
-// the site for a newer one now and then.
+// out of date: the address stays pointing at the same picture until the site
+// is asked for the address of a newer one.
 //
-// It costs one light API call per channel per minute and only while somebody
-// has the web UI open, so a recorder running headless does no extra work.
+// The address is renewed ON DEMAND: only when the web UI asks for the picture
+// of a channel (FreshLiveThumbURL, called by the preview proxy), and at most
+// once per liveThumbMinAge for each channel. So channels that nobody looks at
+// cost nothing, no goroutine runs per channel, and a card that is on screen
+// gets a picture that is at most a few seconds old.
 
 var (
-	// liveThumbRefreshInterval is how often the newest preview address is asked for.
-	// (Variables only so that tests can shorten them.)
-	liveThumbRefreshInterval = 60 * time.Second
+	// liveThumbMinAge is the shortest time between two questions to the site
+	// about the same channel. (Variables only so that tests can shorten them.)
+	liveThumbMinAge = 8 * time.Second
 	// liveThumbMaxBackoff is the longest wait after repeated failures.
-	liveThumbMaxBackoff = 5 * time.Minute
-	// liveThumbJitterMax spreads the channels over this much time so that they
-	// do not all ask in the same second.
-	liveThumbJitterMax = 10 * time.Second
+	liveThumbMaxBackoff = 60 * time.Second
 )
+
+// previewReq is the HTTP client shared by all the preview renewals (one
+// transport for the whole program instead of one per channel).
+var previewReq = sync.OnceValue(internal.NewReq)
 
 // liveThumbURL returns the address of the channel's live preview.
 func (ch *Channel) liveThumbURL() string {
@@ -48,47 +50,50 @@ func (ch *Channel) setLiveThumbURL(u string) bool {
 	return true
 }
 
-// GetLiveThumbURL is the address of the channel's live preview (safe to call
-// from any goroutine).
+// GetLiveThumbURL is the address of the channel's live preview as last known
+// (safe to call from any goroutine).
 func (ch *Channel) GetLiveThumbURL() string { return ch.liveThumbURL() }
 
-// keepLiveThumbFresh renews the live preview address until ctx ends.
-func (ch *Channel) keepLiveThumbFresh(ctx context.Context, src site.LiveThumbSource) {
-	req := internal.NewReq()
-	var jitter time.Duration
-	if liveThumbJitterMax > 0 {
-		jitter = time.Duration(crc32.ChecksumIEEE([]byte(ch.Config.Username))) % liveThumbJitterMax
+// FreshLiveThumbURL returns the address of the newest live preview. For sites
+// whose address never changes (Chaturbate) it is just the stored one; for the
+// others the site is asked for a newer address first, unless it was asked less
+// than liveThumbMinAge ago.
+func (ch *Channel) FreshLiveThumbURL(ctx context.Context) string {
+	src, ok := resolveSite(ch.Config.Site).(site.LiveThumbSource)
+	if !ok {
+		return ch.liveThumbURL()
 	}
+	return ch.freshLiveThumbURL(ctx, src)
+}
 
-	failures := 0
-	for {
-		wait := liveThumbRefreshInterval + jitter
-		for i := 0; i < failures && wait < liveThumbMaxBackoff; i++ {
-			wait *= 2
-		}
-		if wait > liveThumbMaxBackoff {
-			wait = liveThumbMaxBackoff
-		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
+func (ch *Channel) freshLiveThumbURL(ctx context.Context, src site.LiveThumbSource) string {
+	// One question at a time per channel: requests that arrive while it is being
+	// asked wait for the answer instead of asking again.
+	ch.liveThumbMu.Lock()
+	defer ch.liveThumbMu.Unlock()
 
-		if !server.Manager.HasViewers() {
-			continue // nobody is looking at the previews
-		}
-		u, err := src.FetchLiveThumbURL(ctx, req, ch.Config.Username)
-		if err != nil || u == "" {
-			if ctx.Err() != nil {
-				return
-			}
-			failures++ // keep the picture we have and try again later
-			continue
-		}
-		failures = 0
-		ch.setLiveThumbURL(u)
+	wait := liveThumbMinAge
+	for i := 0; i < ch.liveThumbFails && wait < liveThumbMaxBackoff; i++ {
+		wait *= 2
 	}
+	if wait > liveThumbMaxBackoff {
+		wait = liveThumbMaxBackoff
+	}
+	if !ch.liveThumbAsked.IsZero() && time.Since(ch.liveThumbAsked) < wait {
+		return ch.liveThumbURL()
+	}
+	ch.liveThumbAsked = time.Now()
+
+	u, err := src.FetchLiveThumbURL(ctx, previewReq(), ch.Config.Username)
+	if err != nil || u == "" {
+		if ctx.Err() != nil {
+			ch.liveThumbAsked = time.Time{} // the browser went away; that is not the site's fault
+			return ch.liveThumbURL()
+		}
+		ch.liveThumbFails++ // keep the picture we have and try again later
+		return ch.liveThumbURL()
+	}
+	ch.liveThumbFails = 0
+	ch.setLiveThumbURL(u)
+	return u
 }

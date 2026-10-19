@@ -16,101 +16,114 @@ import (
 type fakeThumbSource struct {
 	calls atomic.Int32
 	fail  atomic.Bool
+	delay time.Duration
 }
 
 func (f *fakeThumbSource) FetchLiveThumbURL(ctx context.Context, _ *internal.Req, user string) (string, error) {
 	n := f.calls.Add(1)
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	if f.fail.Load() {
 		return "", errors.New("site unavailable")
 	}
 	return fmt.Sprintf("https://cdn.example/thumbs/%d/%s", n, user), nil
 }
 
-// startRefresher runs keepLiveThumbFresh with short timings and returns a
-// function that stops it and waits for it to exit.
-func startRefresher(t *testing.T, ui *fakeUI, src *fakeThumbSource) (*Channel, func()) {
+func newThumbChannel(t *testing.T, minAge, maxBackoff time.Duration) *Channel {
 	t.Helper()
-	oldI, oldB, oldJ := liveThumbRefreshInterval, liveThumbMaxBackoff, liveThumbJitterMax
-	liveThumbRefreshInterval, liveThumbMaxBackoff, liveThumbJitterMax = 20*time.Millisecond, 160*time.Millisecond, 0
-	ch := newTestChannel(t, ui, time.Hour)
+	oldA, oldB := liveThumbMinAge, liveThumbMaxBackoff
+	liveThumbMinAge, liveThumbMaxBackoff = minAge, maxBackoff
+	ch := newTestChannel(t, &fakeUI{pushes: map[string]int{}}, time.Hour)
 	ch.setLiveThumbURL("https://cdn.example/thumbs/0/tester")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { defer wg.Done(); ch.keepLiveThumbFresh(ctx, src) }()
-	stop := func() { cancel(); wg.Wait() }
-	// Registered after newTestChannel's cleanup, so it runs first: the goroutine
-	// reads globals that are restored there.
-	t.Cleanup(func() {
-		stop()
-		liveThumbRefreshInterval, liveThumbMaxBackoff, liveThumbJitterMax = oldI, oldB, oldJ
-	})
-	return ch, stop
+	t.Cleanup(func() { liveThumbMinAge, liveThumbMaxBackoff = oldA, oldB })
+	return ch
 }
 
-func TestLiveThumbIsRenewedWhileSomeoneWatches(t *testing.T) {
-	ui := &fakeUI{pushes: map[string]int{}, viewers: true}
+func TestLiveThumbIsRenewedOnDemandAndRateLimited(t *testing.T) {
+	ch := newThumbChannel(t, 80*time.Millisecond, time.Second)
 	src := &fakeThumbSource{}
-	ch, _ := startRefresher(t, ui, src)
+	ctx := context.Background()
 
-	first := ch.liveThumbURL()
-	if !waitFor(2*time.Second, func() bool { return src.calls.Load() >= 2 }) {
-		t.Fatal("the preview address was not renewed twice in 2 s")
+	first := ch.freshLiveThumbURL(ctx, src)
+	if first == "https://cdn.example/thumbs/0/tester" {
+		t.Fatal("the preview address was not renewed on the first request")
 	}
-	if got := ch.liveThumbURL(); got == first {
-		t.Fatalf("preview address still %q after %d renewals", got, src.calls.Load())
+	// A burst of requests (several browsers, several cards) asks the site once.
+	for i := 0; i < 20; i++ {
+		if got := ch.freshLiveThumbURL(ctx, src); got != first {
+			t.Fatalf("request %d changed the address within the minimum age: %q", i, got)
+		}
 	}
-}
-
-func TestLiveThumbIsNotAskedForWithoutViewers(t *testing.T) {
-	ui := &fakeUI{pushes: map[string]int{}, viewers: false}
-	src := &fakeThumbSource{}
-	startRefresher(t, ui, src)
-
-	time.Sleep(300 * time.Millisecond) // ~15 intervals
-	if n := src.calls.Load(); n != 0 {
-		t.Fatalf("site was asked %d times although no browser has the UI open", n)
+	if n := src.calls.Load(); n != 1 {
+		t.Fatalf("site asked %d times for 21 requests in a burst, want 1", n)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if got := ch.freshLiveThumbURL(ctx, src); got == first || src.calls.Load() != 2 {
+		t.Fatalf("after the minimum age the address must be renewed: %q (%d calls)", got, src.calls.Load())
 	}
 }
 
 func TestLiveThumbKeepsThePictureWhenTheSiteFails(t *testing.T) {
-	ui := &fakeUI{pushes: map[string]int{}, viewers: true}
+	ch := newThumbChannel(t, 20*time.Millisecond, 160*time.Millisecond)
 	src := &fakeThumbSource{}
 	src.fail.Store(true)
-	ch, _ := startRefresher(t, ui, src)
 	before := ch.liveThumbURL()
+	ctx := context.Background()
 
-	time.Sleep(500 * time.Millisecond)
-	if got := ch.liveThumbURL(); got != before {
-		t.Fatalf("a failing site replaced the preview address: %q", got)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if got := ch.freshLiveThumbURL(ctx, src); got != before {
+			t.Fatalf("a failing site replaced the preview address: %q", got)
+		}
+		time.Sleep(2 * time.Millisecond)
 	}
-	// Backing off: 20, 40, 80, 160, 160... ms means ~5 calls in 500 ms, not 25.
+	// Backing off: 20, 40, 80, 160, 160... ms between questions, not one per request.
 	if n := src.calls.Load(); n < 2 || n > 8 {
 		t.Fatalf("expected a handful of backed-off retries, got %d", n)
 	}
 
 	src.fail.Store(false)
-	if !waitFor(2*time.Second, func() bool { return ch.liveThumbURL() != before }) {
+	if !waitFor(2*time.Second, func() bool { return ch.freshLiveThumbURL(ctx, src) != before }) {
 		t.Fatal("the preview address did not recover once the site answered again")
 	}
 }
 
-func TestLiveThumbRefresherStopsWithItsContext(t *testing.T) {
-	ui := &fakeUI{pushes: map[string]int{}, viewers: true}
-	src := &fakeThumbSource{}
-	_, stop := startRefresher(t, ui, src)
-
-	done := make(chan struct{})
-	go func() { stop(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("refresher did not stop when its context was cancelled")
+func TestLiveThumbConcurrentRequestsShareOneQuestion(t *testing.T) {
+	ch := newThumbChannel(t, time.Second, time.Minute)
+	src := &fakeThumbSource{delay: 60 * time.Millisecond}
+	var wg sync.WaitGroup
+	got := make([]string, 8)
+	for i := range got {
+		wg.Add(1)
+		go func(i int) { defer wg.Done(); got[i] = ch.freshLiveThumbURL(context.Background(), src) }(i)
 	}
-	n := src.calls.Load()
-	time.Sleep(100 * time.Millisecond)
-	if src.calls.Load() != n {
-		t.Fatal("refresher kept calling the site after it was stopped")
+	wg.Wait()
+	if n := src.calls.Load(); n != 1 {
+		t.Fatalf("8 simultaneous requests asked the site %d times, want 1", n)
+	}
+	for _, u := range got {
+		if u != got[0] {
+			t.Fatalf("simultaneous requests got different addresses: %v", got)
+		}
+	}
+}
+
+func TestLiveThumbRequestThatIsAbandonedDoesNotCountAsAFailure(t *testing.T) {
+	ch := newThumbChannel(t, time.Second, time.Minute)
+	src := &fakeThumbSource{delay: time.Second}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	before := ch.liveThumbURL()
+	if got := ch.freshLiveThumbURL(ctx, src); got != before {
+		t.Fatalf("abandoned request changed the address: %q", got)
+	}
+	src.delay = 0
+	if got := ch.freshLiveThumbURL(context.Background(), src); got == before {
+		t.Fatal("the next request must be allowed to ask the site at once after an abandoned one")
 	}
 }

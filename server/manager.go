@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/HeapOfChaos/goondvr/entity"
@@ -23,7 +24,10 @@ type IManager interface {
 	SaveConfig() error
 	Shutdown()
 	GetChannelThumb(channelID string) string
-	GetChannelLiveThumb(channelID string) string
+	// GetChannelLiveThumb returns the address of the newest live preview of the
+	// channel; for sites whose previews are snapshots it asks the site for a newer
+	// one when the last one is a few seconds old.
+	GetChannelLiveThumb(ctx context.Context, channelID string) string
 	ReportCFBlock(username string)
 	ResetCFBlock(username string)
 	GetStats() StatsResponse

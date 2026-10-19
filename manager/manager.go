@@ -2,6 +2,7 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -692,12 +693,12 @@ func (m *Manager) GetChannelThumb(channelID string) string {
 // GetChannelLiveThumb returns the live-updating thumbnail URL for the given username.
 // For Stripchat this is the doppiocdn snapshot URL; for Chaturbate it returns empty
 // (the JS handles Chaturbate live thumbs via mmcdn directly).
-func (m *Manager) GetChannelLiveThumb(channelID string) string {
+func (m *Manager) GetChannelLiveThumb(ctx context.Context, channelID string) string {
 	val, ok := m.Channels.Load(channelID)
 	if !ok {
 		return ""
 	}
-	return val.(*channel.Channel).GetLiveThumbURL()
+	return val.(*channel.Channel).FreshLiveThumbURL(ctx)
 }
 
 // Shutdown gracefully stops all active channels, saves config, and waits for

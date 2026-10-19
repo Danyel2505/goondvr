@@ -669,7 +669,10 @@
             // nobody can see), each at its own moment so they do not all load at
             // once, a few at a time, and a failed or hung image is retried later
             // while the previous picture stays on screen.
-            const LIVE_REFRESH_MS = 30 * 1000;          // channel that is online
+            const LIVE_FOCUS_MS = 10 * 1000;            // online channel whose card is really on screen: what you are looking at
+            const LIVE_REFRESH_MS = 30 * 1000;          // online channel whose card is only near the screen
+            const THUMB_MAX_RATE = 2;                   // images per second for all the cards together: with many cards on
+                                                        // screen each one is renewed less often, so the load stays bounded
             const OFFLINE_REFRESH_MS = 5 * 60 * 1000;   // channel that is not: its picture hardly changes
             const LIVE_RETRY_MS = [5000, 10000, 20000, 40000]; // after a failed load
             const THUMB_TIMEOUT_MS = 15000;             // one image may take this long
@@ -733,7 +736,7 @@
             function thumbInfo(channelID) {
                 let st = thumbState.get(channelID);
                 if (!st) {
-                    st = { live: '', nextAt: 0, loading: false, fails: 0, isLive: null,
+                    st = { live: '', loadedAt: 0, failAt: 0, loading: false, fails: 0, isLive: null,
                            card: { url: '', ok: false, loading: false, fails: 0, retryAt: 0 } };
                     thumbState.set(channelID, st);
                 }
@@ -823,34 +826,52 @@
             // Spreads the cards over a few seconds so that they do not all refresh
             // together. (Names that differ in one character must land far apart, so
             // the hash is scrambled.)
-            function thumbJitter(channelID) {
+            function thumbJitter(channelID, span) {
                 let h = parseInt(hashString(channelID), 36) | 0;
                 h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);
                 h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);
                 h ^= h >>> 16;
-                return (h >>> 0) % 8000;
+                return (h >>> 0) % span;
             }
+
+            // How often the picture of a card is renewed: the cards that are really on
+            // screen often (every LIVE_FOCUS_MS, or less often when there are so many that
+            // the total would exceed THUMB_MAX_RATE), the ones that are only near the
+            // screen less often, and offline channels rarely.
+            let focusInterval = LIVE_FOCUS_MS;
+            function thumbInterval(switcher, isLive) {
+                if (!isLive) return OFFLINE_REFRESH_MS;
+                return focusSwitchers.has(switcher) ? focusInterval : LIVE_REFRESH_MS;
+            }
+
+            // Forget when the picture was loaded: it is renewed again on the next tick.
+            function thumbDueNow(st) { st.loadedAt = 0; st.failAt = 0; st.fails = 0; }
 
             // Starts downloading a newer picture for the card if one is due.
             function ensureThumb(switcher, now) {
                 const channelID = switcher.dataset.channelId;
                 const st = thumbInfo(channelID);
                 if (effectiveThumbMode(switcher) === 'live') {
-                    if (st.loading || now < st.nextAt) return;
+                    if (st.loading) return;
                     const isLive = switcher.dataset.isLive.trim() === 'true';
+                    const interval = thumbInterval(switcher, isLive);
+                    const due = st.fails
+                        ? st.failAt + (isLive ? LIVE_RETRY_MS[Math.min(st.fails, LIVE_RETRY_MS.length) - 1] : OFFLINE_REFRESH_MS)
+                        : st.loadedAt + interval + thumbJitter(channelID, Math.max(500, interval >> 3));
+                    if (now < due) return;
                     st.loading = true;
                     // A new address every refresh (the CDN keeps the picture for a while
                     // per address); `r` changes after a failure so a bad answer is not reused.
                     const src = LIVE_THUMB_URL(switcher.dataset.username, switcher.dataset.site || 'chaturbate', channelID)
-                        + '?' + Math.floor(now / LIVE_REFRESH_MS) + (st.fails ? '&r=' + st.fails : '');
+                        + '?' + Math.floor(now / 5000) + (st.fails ? '&r=' + st.fails : '');
                     enqueueThumbLoad(src).then(() => {
                         st.live = src;
                         st.fails = 0;
-                        st.nextAt = Date.now() + (isLive ? LIVE_REFRESH_MS : OFFLINE_REFRESH_MS) + thumbJitter(channelID);
+                        st.loadedAt = Date.now();
                         repaintChannel(channelID);
                     }, () => {
                         st.fails++;
-                        st.nextAt = Date.now() + (isLive ? LIVE_RETRY_MS[Math.min(st.fails, LIVE_RETRY_MS.length) - 1] : OFFLINE_REFRESH_MS);
+                        st.failAt = Date.now();
                     }).then(() => { st.loading = false; });
                 } else {
                     const url = CARD_THUMB_URL(channelID, switcher.dataset.cardVer);
@@ -870,6 +891,21 @@
             // Cards that are (nearly) on screen. Cards of the hidden views and cards
             // scrolled far away are not in the set and cost nothing.
             const visibleSwitchers = new Set();
+            // Cards really inside the window (no margin): the ones being looked at.
+            const focusSwitchers = new Set();
+            const focusObserver = ('IntersectionObserver' in window)
+                ? new IntersectionObserver(entries => {
+                    const now = Date.now();
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            focusSwitchers.add(entry.target);
+                            ensureThumb(entry.target, now); // looked at now: its picture may be due sooner than it was
+                        } else {
+                            focusSwitchers.delete(entry.target);
+                        }
+                    });
+                }, { rootMargin: '0px' })
+                : null;
             const thumbObserver = ('IntersectionObserver' in window)
                 ? new IntersectionObserver(entries => {
                     const now = Date.now();
@@ -880,6 +916,7 @@
                             ensureThumb(entry.target, now); // scrolled into view: do not wait for the next tick
                         } else {
                             visibleSwitchers.delete(entry.target);
+                            focusSwitchers.delete(entry.target);
                         }
                     });
                 }, { rootMargin: '300px' })
@@ -888,6 +925,9 @@
             function tickThumbs() {
                 if (document.hidden) return;
                 const now = Date.now();
+                let onScreen = 0;
+                focusSwitchers.forEach(s => { if (s.dataset.isLive.trim() === 'true') onScreen++; });
+                focusInterval = Math.max(LIVE_FOCUS_MS, Math.ceil(onScreen / THUMB_MAX_RATE) * 1000);
                 const list = thumbObserver ? Array.from(visibleSwitchers) : Array.from(activeSwitchers());
                 list.forEach(switcher => {
                     if (!switcher.isConnected) { visibleSwitchers.delete(switcher); return; }
@@ -969,9 +1009,9 @@
                 activeSwitchers(scope).forEach(switcher => {
                     const st = thumbInfo(switcher.dataset.channelId);
                     const isLive = switcher.dataset.isLive.trim();
-                    if (st.isLive !== isLive) { st.isLive = isLive; st.nextAt = 0; } // went online/offline: look for a new picture
+                    if (st.isLive !== isLive) { st.isLive = isLive; thumbDueNow(st); } // went online/offline: look for a new picture
                     paintThumb(switcher);
-                    if (thumbObserver) thumbObserver.observe(switcher);
+                    if (thumbObserver) { thumbObserver.observe(switcher); focusObserver.observe(switcher); }
                     else ensureThumb(switcher, Date.now());
                 });
             }
@@ -983,7 +1023,7 @@
                 const switcher = btn.closest('.img-switcher');
                 const channelID = switcher.dataset.channelId;
                 writeStored('dvr-thumb-' + channelID, btn.dataset.mode);
-                if (btn.dataset.mode === 'live') thumbInfo(channelID).nextAt = 0; // asked for it: refresh now
+                if (btn.dataset.mode === 'live') thumbDueNow(thumbInfo(channelID)); // asked for it: refresh now
                 paintThumb(switcher);
                 ensureThumb(switcher, Date.now());
             });

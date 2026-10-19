@@ -68,7 +68,11 @@ type Channel struct {
 	EdgeRegion          string
 	SummaryCardImage    string
 	LiveThumbURL        string
-	CFBlockCount        int
+	// Renewal of LiveThumbURL on demand (see livethumb.go), guarded by liveThumbMu.
+	liveThumbMu    sync.Mutex
+	liveThumbAsked time.Time
+	liveThumbFails int
+	CFBlockCount   int
 
 	logsMu sync.RWMutex
 	Logs   []string

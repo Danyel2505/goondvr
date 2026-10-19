@@ -139,7 +139,7 @@ func ThumbProxy(c *gin.Context) {
 // For Stripchat this uses img.doppiocdn.net; for Chaturbate it falls back to
 // the summary card image (the JS handles Chaturbate live thumbs directly).
 func LiveThumbProxy(c *gin.Context) {
-	imgURL := server.Manager.GetChannelLiveThumb(c.Param("channelID"))
+	imgURL := server.Manager.GetChannelLiveThumb(c.Request.Context(), c.Param("channelID"))
 	if imgURL == "" {
 		c.Status(http.StatusNotFound)
 		return

@@ -235,13 +235,6 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 
 	ch.UpdateOnlineStatus(true) // Update online status after playlist is OK
 
-	// The preview address of some sites is a snapshot: keep asking for a newer one.
-	if src, ok := s.(site.LiveThumbSource); ok && streamInfo.LiveThumbURL != "" {
-		thumbCtx, stopThumbs := context.WithCancel(ctx)
-		defer stopThumbs()
-		go ch.keepLiveThumbFresh(thumbCtx, src)
-	}
-
 	// Reset CF state on successful stream start.
 	ch.CFBlockCount = 0
 	notifier.Default.ResetCooldown(fmt.Sprintf(notifier.KeyCFChannel, ch.Config.Username))

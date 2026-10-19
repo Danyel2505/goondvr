@@ -16,8 +16,8 @@ import (
 // short time and the browser is told it may reuse them as well.
 
 const (
-	cardThumbTTL = 5 * time.Minute  // profile / summary-card image
-	liveThumbTTL = 20 * time.Second // live preview snapshot (the page renews it every 30 s)
+	cardThumbTTL = 5 * time.Minute // profile / summary-card image
+	liveThumbTTL = 8 * time.Second // live preview snapshot: about the shortest age at which the site is asked for a newer one
 
 	thumbCacheMaxEntries = 256
 	thumbCacheMaxBytes   = 32 << 20 // 32 MiB
