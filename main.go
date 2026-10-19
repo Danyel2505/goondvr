@@ -27,7 +27,7 @@ const logo = `
 func main() {
 	app := &cli.App{
 		Name:    "goondvr",
-		Version: "4.0.1-nolag",
+		Version: "4.0.1-nolag2",
 		Usage:   "Record your favorite streams automatically. 😎🫵",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
