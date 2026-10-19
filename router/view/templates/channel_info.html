@@ -2,7 +2,7 @@
 {{ if eq .ViewMode "expanded" }}
 <div class="view-expanded">
     {{ if or .IsOnline .SummaryCardImage }}
-    <div class="img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-online="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1"{{ end }}>
+    <div class="img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
         <div class="channel-thumb-img"><div class="thumb-layer"></div><div class="thumb-layer"></div></div>
         {{ if .SummaryCardImage }}
         <div class="img-switcher-bar">
@@ -16,7 +16,7 @@
 {{ else if eq .ViewMode "grid" }}
 <div class="view-grid">
     {{ if or .IsOnline .SummaryCardImage }}
-    <div class="img-switcher grid-img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-online="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1"{{ end }}>
+    <div class="img-switcher grid-img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
         <div class="channel-thumb-img"><div class="thumb-layer"></div><div class="thumb-layer"></div></div>
         {{ if .SummaryCardImage }}
         <div class="img-switcher-bar">
@@ -32,7 +32,7 @@
 {{ else if eq .ViewMode "collapsed" }}
 <div class="view-collapsed">
     {{ if or .IsOnline .SummaryCardImage }}
-    <div class="img-switcher collapsed-img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-online="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1"{{ end }}>
+    <div class="img-switcher collapsed-img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
         <div class="channel-thumb-img"><div class="thumb-layer"></div><div class="thumb-layer"></div></div>
     </div>
     {{ else }}

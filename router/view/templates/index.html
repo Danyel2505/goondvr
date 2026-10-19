@@ -659,12 +659,27 @@
                 if (site === 'stripchat') return `/live-thumb/${encodeURIComponent(channelID)}`;
                 return `https://thumb.live.mmcdn.com/riw/${username}.jpg`;
             };
-            const CARD_THUMB_URL = channelID => `/thumb/${encodeURIComponent(channelID)}`;
-            const LIVE_THUMB_CACHE_BUCKET_MS = 60 * 1000;
+            // The version changes when the channel's profile picture changes, so the
+            // browser never keeps showing an old one from its cache.
+            const CARD_THUMB_URL = (channelID, version) =>
+                `/thumb/${encodeURIComponent(channelID)}?v=${hashString(version || '')}`;
 
-            // Stores the last successfully loaded live URL per username.
-            // SSE re-inits reuse this so they don't fire a new network request.
-            const liveThumbCache = {};
+            // Live previews. Only cards that are on screen are renewed (a dashboard
+            // with many channels would otherwise download and decode dozens of images
+            // nobody can see), each at its own moment so they do not all load at
+            // once, a few at a time, and a failed or hung image is retried later
+            // while the previous picture stays on screen.
+            const LIVE_REFRESH_MS = 30 * 1000;          // channel that is online
+            const OFFLINE_REFRESH_MS = 5 * 60 * 1000;   // channel that is not: its picture hardly changes
+            const LIVE_RETRY_MS = [5000, 10000, 20000, 40000]; // after a failed load
+            const THUMB_TIMEOUT_MS = 15000;             // one image may take this long
+            const THUMB_PARALLEL = 4;                   // images loading at the same time
+
+            function hashString(s) {
+                let h = 5381;
+                for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+                return (h >>> 0).toString(36);
+            }
 
             // Connection to the event stream (used by the htmx SSE extension).
             // The first connection of this page needs nothing special: the page was
@@ -700,67 +715,195 @@
             }
 
             function savedThumbMode(switcher) {
-                const isOnline = switcher.dataset.online === 'true';
+                const isLive = switcher.dataset.isLive.trim() === 'true';
                 const hasCard = switcher.dataset.hasCard === '1';
-                const defaultMode = isOnline ? 'live' : (hasCard ? 'card' : 'live');
+                const defaultMode = isLive ? 'live' : (hasCard ? 'card' : 'live');
                 return readStored('dvr-thumb-' + switcher.dataset.channelId) || defaultMode;
             }
 
-            function setThumb(el, newSrc) {
-                // Already showing (or already loading) this exact image: do nothing.
-                // Without this check every redraw re-requested and re-decoded every
-                // thumbnail on the page, which is what froze the browser.
-                if (el.dataset.src === newSrc || el._loadingSrc === newSrc) return;
-                const layers = el.querySelectorAll('.thumb-layer');
-                if (layers.length < 2) return;
-                el._loadingSrc = newSrc;
-                const preloader = new Image();
-                preloader.src = newSrc;
-                const ready = preloader.decode
-                    ? preloader.decode()
-                    : new Promise(r => { preloader.onload = r; preloader.onerror = r; });
-                ready.then(() => {
-                    if (el._loadingSrc !== newSrc) return; // superseded by a newer request
-                    const activeIdx = parseInt(el.dataset.activeLayer || '0');
-                    const nextIdx = 1 - activeIdx;
-                    layers[nextIdx].style.backgroundImage = `url("${newSrc}")`;
-                    el.dataset.src = newSrc;
-                    requestAnimationFrame(() => {
-                        layers[nextIdx].style.opacity = '1';
-                        layers[activeIdx].style.opacity = '0';
-                        el.dataset.activeLayer = String(nextIdx);
-                    });
-                }).catch(() => {}).then(() => {
-                    if (el._loadingSrc === newSrc) el._loadingSrc = null;
+            // The mode a card really shows: a profile picture is only possible when there is one.
+            function effectiveThumbMode(switcher) {
+                const mode = savedThumbMode(switcher);
+                return (mode === 'card' && switcher.dataset.hasCard !== '1') ? 'live' : mode;
+            }
+
+            // What is known about the previews of each channel. The cards are redrawn
+            // by the event stream (new elements), so it is kept outside the DOM.
+            const thumbState = new Map();
+            function thumbInfo(channelID) {
+                let st = thumbState.get(channelID);
+                if (!st) {
+                    st = { live: '', nextAt: 0, loading: false, fails: 0, isLive: null,
+                           card: { url: '', ok: false, loading: false, fails: 0, retryAt: 0 } };
+                    thumbState.set(channelID, st);
+                }
+                return st;
+            }
+
+            // Downloads and decodes an image. Rejects when it fails or takes too long;
+            // the picture on screen is only replaced once the new one is ready.
+            function loadImage(src) {
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    let done = false;
+                    const finish = ok => {
+                        if (done) return;
+                        done = true;
+                        clearTimeout(timer);
+                        img.onload = img.onerror = null;
+                        if (!ok) { reject(new Error('thumbnail failed')); return; }
+                        (img.decode ? img.decode() : Promise.resolve()).then(resolve, () => reject(new Error('thumbnail undecodable')));
+                    };
+                    const timer = setTimeout(() => { img.src = ''; finish(false); }, THUMB_TIMEOUT_MS);
+                    img.onload = () => finish(true);
+                    img.onerror = () => finish(false);
+                    img.src = src;
                 });
             }
 
-            // refresh=true always fetches a new timestamped live URL.
-            // refresh=false (SSE re-init) reuses the cached URL to avoid hammering the CDN.
-            function applyThumbMode(switcher, mode, refresh) {
-                const username = switcher.dataset.username;
-                const channelID = switcher.dataset.channelId;
-                const site = switcher.dataset.site || 'chaturbate';
-                const hasCard = switcher.dataset.hasCard === '1';
+            // At most THUMB_PARALLEL images load at once; the rest wait their turn.
+            const thumbQueue = [];
+            let thumbActive = 0;
+            function enqueueThumbLoad(src) {
+                return new Promise((resolve, reject) => {
+                    thumbQueue.push({ src, resolve, reject });
+                    pumpThumbQueue();
+                });
+            }
+            function pumpThumbQueue() {
+                while (thumbActive < THUMB_PARALLEL && thumbQueue.length) {
+                    const job = thumbQueue.shift();
+                    thumbActive++;
+                    loadImage(job.src).then(job.resolve, job.reject).then(() => {
+                        thumbActive--;
+                        pumpThumbQueue();
+                    });
+                }
+            }
+
+            // Puts an already loaded image on a card: the hidden layer is filled and swapped in.
+            function showThumb(el, src) {
+                if (el.dataset.src === src) return;
+                const layers = el.querySelectorAll('.thumb-layer');
+                if (layers.length < 2) return;
+                const active = parseInt(el.dataset.activeLayer || '0');
+                const next = 1 - active;
+                layers[next].style.backgroundImage = `url("${src}")`;
+                layers[next].style.opacity = '1';
+                layers[active].style.opacity = '0';
+                el.dataset.activeLayer = String(next);
+                el.dataset.src = src;
+            }
+
+            // Shows what is already known for a card, without touching the network.
+            // A redrawn card gets its last picture back immediately instead of
+            // staying blank until the next download.
+            function paintThumb(switcher) {
                 const el = switcher.querySelector('.channel-thumb-img');
                 if (!el) return;
-                const effectiveMode = (mode === 'card' && !hasCard) ? 'live' : mode;
-                let src;
-                if (effectiveMode === 'live') {
-                    if (!refresh && liveThumbCache[channelID]) {
-                        src = liveThumbCache[channelID];
-                    } else {
-                        const cacheBucket = Math.floor(Date.now() / LIVE_THUMB_CACHE_BUCKET_MS);
-                        src = LIVE_THUMB_URL(username, site, channelID) + '?' + cacheBucket;
-                        liveThumbCache[channelID] = src;
-                    }
-                } else {
-                    src = CARD_THUMB_URL(channelID);
-                }
-                setThumb(el, src);
+                const mode = effectiveThumbMode(switcher);
                 switcher.querySelectorAll('.img-sw-btn').forEach(btn => {
-                    btn.classList.toggle('is-active', btn.dataset.mode === effectiveMode);
+                    btn.classList.toggle('is-active', btn.dataset.mode === mode);
                 });
+                const channelID = switcher.dataset.channelId;
+                const st = thumbInfo(channelID);
+                if (mode === 'live') {
+                    if (st.live) showThumb(el, st.live);
+                } else {
+                    const url = CARD_THUMB_URL(channelID, switcher.dataset.cardVer);
+                    if (st.card.ok && st.card.url === url) showThumb(el, url);
+                }
+            }
+
+            function repaintChannel(channelID) {
+                document.querySelectorAll('.view-' + currentView + ' .img-switcher[data-channel-id="' + CSS.escape(channelID) + '"]')
+                    .forEach(paintThumb);
+            }
+
+            // Spreads the cards over a few seconds so that they do not all refresh
+            // together. (Names that differ in one character must land far apart, so
+            // the hash is scrambled.)
+            function thumbJitter(channelID) {
+                let h = parseInt(hashString(channelID), 36) | 0;
+                h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);
+                h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);
+                h ^= h >>> 16;
+                return (h >>> 0) % 8000;
+            }
+
+            // Starts downloading a newer picture for the card if one is due.
+            function ensureThumb(switcher, now) {
+                const channelID = switcher.dataset.channelId;
+                const st = thumbInfo(channelID);
+                if (effectiveThumbMode(switcher) === 'live') {
+                    if (st.loading || now < st.nextAt) return;
+                    const isLive = switcher.dataset.isLive.trim() === 'true';
+                    st.loading = true;
+                    // A new address every refresh (the CDN keeps the picture for a while
+                    // per address); `r` changes after a failure so a bad answer is not reused.
+                    const src = LIVE_THUMB_URL(switcher.dataset.username, switcher.dataset.site || 'chaturbate', channelID)
+                        + '?' + Math.floor(now / LIVE_REFRESH_MS) + (st.fails ? '&r=' + st.fails : '');
+                    enqueueThumbLoad(src).then(() => {
+                        st.live = src;
+                        st.fails = 0;
+                        st.nextAt = Date.now() + (isLive ? LIVE_REFRESH_MS : OFFLINE_REFRESH_MS) + thumbJitter(channelID);
+                        repaintChannel(channelID);
+                    }, () => {
+                        st.fails++;
+                        st.nextAt = Date.now() + (isLive ? LIVE_RETRY_MS[Math.min(st.fails, LIVE_RETRY_MS.length) - 1] : OFFLINE_REFRESH_MS);
+                    }).then(() => { st.loading = false; });
+                } else {
+                    const url = CARD_THUMB_URL(channelID, switcher.dataset.cardVer);
+                    const c = st.card;
+                    if (c.url !== url) { c.url = url; c.ok = false; c.loading = false; c.fails = 0; c.retryAt = 0; }
+                    if (c.ok || c.loading || now < c.retryAt) return;
+                    c.loading = true;
+                    enqueueThumbLoad(url).then(() => {
+                        if (c.url === url) { c.ok = true; repaintChannel(channelID); }
+                    }, () => {
+                        c.fails++;
+                        c.retryAt = Date.now() + Math.min(60000, 5000 * c.fails);
+                    }).then(() => { if (c.url === url) c.loading = false; });
+                }
+            }
+
+            // Cards that are (nearly) on screen. Cards of the hidden views and cards
+            // scrolled far away are not in the set and cost nothing.
+            const visibleSwitchers = new Set();
+            const thumbObserver = ('IntersectionObserver' in window)
+                ? new IntersectionObserver(entries => {
+                    const now = Date.now();
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            visibleSwitchers.add(entry.target);
+                            paintThumb(entry.target);
+                            ensureThumb(entry.target, now); // scrolled into view: do not wait for the next tick
+                        } else {
+                            visibleSwitchers.delete(entry.target);
+                        }
+                    });
+                }, { rootMargin: '300px' })
+                : null;
+
+            function tickThumbs() {
+                if (document.hidden) return;
+                const now = Date.now();
+                const list = thumbObserver ? Array.from(visibleSwitchers) : Array.from(activeSwitchers());
+                list.forEach(switcher => {
+                    if (!switcher.isConnected) { visibleSwitchers.delete(switcher); return; }
+                    ensureThumb(switcher, now);
+                });
+            }
+
+            // Which pictures a card can show; used to tell whether a redraw changes anything.
+            function thumbSignature(switchers) {
+                return Array.from(switchers, s => [s.dataset.isLive.trim(), s.dataset.hasCard || '',
+                                                   s.dataset.cardVer || '', s.dataset.site || ''].join(',')).join('|');
+            }
+            function thumbSignatureOfHtml(html) {
+                const tpl = document.createElement('template');
+                tpl.innerHTML = html;
+                return thumbSignature(tpl.content.querySelectorAll('.img-switcher'));
             }
 
             // Tracks when each channel's marquee animation started (by username).
@@ -821,32 +964,32 @@
                 });
             }
 
-            // SSE re-init: reuse cached URLs, no new network requests
+            // The cards were (re)drawn: show what is known and watch them.
             function initThumbSwitchers(scope) {
                 activeSwitchers(scope).forEach(switcher => {
-                    applyThumbMode(switcher, savedThumbMode(switcher), false);
+                    const st = thumbInfo(switcher.dataset.channelId);
+                    const isLive = switcher.dataset.isLive.trim();
+                    if (st.isLive !== isLive) { st.isLive = isLive; st.nextAt = 0; } // went online/offline: look for a new picture
+                    paintThumb(switcher);
+                    if (thumbObserver) thumbObserver.observe(switcher);
+                    else ensureThumb(switcher, Date.now());
                 });
             }
 
-            // Click: force a fresh fetch
+            // Click on the profile/live buttons of a card.
             document.body.addEventListener('click', function(e) {
                 const btn = e.target.closest('.img-sw-btn');
                 if (!btn) return;
                 const switcher = btn.closest('.img-switcher');
                 const channelID = switcher.dataset.channelId;
-                const mode = btn.dataset.mode;
-                applyThumbMode(switcher, mode, true);
-                writeStored('dvr-thumb-' + channelID, mode);
+                writeStored('dvr-thumb-' + channelID, btn.dataset.mode);
+                if (btn.dataset.mode === 'live') thumbInfo(channelID).nextAt = 0; // asked for it: refresh now
+                paintThumb(switcher);
+                ensureThumb(switcher, Date.now());
             });
 
-            // Every 15s: look for a newer live thumbnail. The URL only changes once
-            // a minute (cache bucket), so most ticks find the same image and do nothing.
-            setInterval(function() {
-                if (document.hidden) return;
-                activeSwitchers().forEach(switcher => {
-                    if (savedThumbMode(switcher) === 'live') applyThumbMode(switcher, 'live', true);
-                });
-            }, 15000);
+            setInterval(tickThumbs, 1000);
+            document.addEventListener('visibilitychange', function() { if (!document.hidden) tickThumbs(); });
 
             function setView(view) {
                 currentView = view;
@@ -893,6 +1036,14 @@
             document.body.addEventListener("htmx:sseBeforeMessage", function (e) {
                 const elt = e.detail.elt;
                 const swapId = elt && elt.getAttribute('sse-swap');
+                if (swapId && swapId.endsWith("-thumb")) {
+                    // The same pictures are available as before (typical after a
+                    // reconnect): leave the cards alone instead of redrawing them.
+                    if (thumbSignatureOfHtml(e.detail.data) === thumbSignature(elt.querySelectorAll('.img-switcher'))) {
+                        e.preventDefault();
+                    }
+                    return;
+                }
                 if (!swapId || !swapId.endsWith("-log")) return;
 
                 e.preventDefault();
@@ -989,6 +1140,8 @@
                             else pendingLogs.set(dst, src.value);
                             return;
                         }
+                        if (id.endsWith('-thumb') &&
+                            thumbSignature(src.querySelectorAll('.img-switcher')) === thumbSignature(dst.querySelectorAll('.img-switcher'))) return;
                         dst.innerHTML = src.innerHTML;
                         htmx.process(dst);
                         if (id.endsWith('-info')) initMarquees(dst);
