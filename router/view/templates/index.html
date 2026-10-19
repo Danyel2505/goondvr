@@ -159,7 +159,7 @@
             <!-- Channels -->
             <div id="channels-list" class="ts-wrap is-vertical has-top-spaced-large" sse-connect="/updates?stream=updates">
                 {{ range .Channels }}
-                <div class="channel-box ts-box is-horizontal">
+                <div class="channel-box ts-box is-horizontal" data-rank="{{ .Rank }}" data-sort="{{ .SortKey }}">
                     <!-- Info Section -->
                     <div class="channel-info ts-content is-padded has-break-all" style="width: 400px; line-height: 1.45; padding-right: 0">
                         <div sse-swap="{{ .ChannelID }}-thumb">

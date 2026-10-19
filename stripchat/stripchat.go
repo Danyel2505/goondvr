@@ -112,6 +112,22 @@ func (s *Stripchat) FetchLiveThumbURL(ctx context.Context, req *internal.Req, us
 	return "", err
 }
 
+// FetchAvailability implements site.AvailabilitySource using only the light
+// cam API (never the browser fallback).
+func (s *Stripchat) FetchAvailability(ctx context.Context, req *internal.Req, username string) (site.Availability, error) {
+	info, err := fetchStreamViaLegacyAPI(ctx, req, username)
+	switch {
+	case err == nil && info != nil:
+		return site.Availability{Live: true, NumViewers: info.NumViewers, LiveThumbURL: info.LiveThumbURL}, nil
+	case errors.Is(err, internal.ErrChannelOffline), errors.Is(err, internal.ErrPrivateStream):
+		return site.Availability{}, nil
+	}
+	if err == nil {
+		err = fmt.Errorf("stripchat: empty availability answer")
+	}
+	return site.Availability{}, err
+}
+
 func fetchStreamViaLegacyAPI(ctx context.Context, req *internal.Req, username string) (*site.StreamInfo, error) {
 	apiURL := fmt.Sprintf("https://stripchat.com/api/front/v2/models/username/%s/cam", username)
 

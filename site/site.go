@@ -28,6 +28,25 @@ type LiveThumbSource interface {
 	FetchLiveThumbURL(ctx context.Context, req *internal.Req, username string) (string, error)
 }
 
+// Availability is the answer of a site to "is this channel broadcasting right
+// now?", without any intention of recording it.
+type Availability struct {
+	Live         bool   // broadcasting in public, i.e. it could be recorded
+	NumViewers   int    // 0 when unknown
+	LiveThumbURL string // address of the newest preview snapshot, when the site works that way
+}
+
+// AvailabilitySource is implemented by sites that can say whether a channel is
+// broadcasting with one light request. The web UI uses it to move the channels
+// that are on air (but paused, i.e. not being recorded) to the top of the list.
+type AvailabilitySource interface {
+	// FetchAvailability must be cheap and must never use the browser fallback:
+	// it runs for every paused channel, one at a time, only while somebody has
+	// the web UI open. An error means "could not tell" (the previous answer is
+	// kept); a channel that is offline, private or hidden is not an error.
+	FetchAvailability(ctx context.Context, req *internal.Req, username string) (Availability, error)
+}
+
 // Site defines the interface a streaming platform must implement.
 type Site interface {
 	// FetchStream returns StreamInfo if the channel is live, nil if offline.

@@ -1,8 +1,8 @@
 {{ define "channel_thumb" }}
 {{ if eq .ViewMode "expanded" }}
 <div class="view-expanded">
-    {{ if or .IsOnline .SummaryCardImage }}
-    <div class="img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
+    {{ if or .Live .SummaryCardImage }}
+    <div class="img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .Live }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
         <div class="channel-thumb-img"><div class="thumb-layer"></div><div class="thumb-layer"></div></div>
         {{ if .SummaryCardImage }}
         <div class="img-switcher-bar">
@@ -15,8 +15,8 @@
 </div>
 {{ else if eq .ViewMode "grid" }}
 <div class="view-grid">
-    {{ if or .IsOnline .SummaryCardImage }}
-    <div class="img-switcher grid-img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
+    {{ if or .Live .SummaryCardImage }}
+    <div class="img-switcher grid-img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .Live }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
         <div class="channel-thumb-img"><div class="thumb-layer"></div><div class="thumb-layer"></div></div>
         {{ if .SummaryCardImage }}
         <div class="img-switcher-bar">
@@ -31,8 +31,8 @@
 </div>
 {{ else if eq .ViewMode "collapsed" }}
 <div class="view-collapsed">
-    {{ if or .IsOnline .SummaryCardImage }}
-    <div class="img-switcher collapsed-img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .IsOnline }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
+    {{ if or .Live .SummaryCardImage }}
+    <div class="img-switcher collapsed-img-switcher" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-is-live="{{ .Live }}" data-site="{{ .Site }}"{{ if .SummaryCardImage }} data-has-card="1" data-card-ver="{{ .SummaryCardImage }}"{{ end }}>
         <div class="channel-thumb-img"><div class="thumb-layer"></div><div class="thumb-layer"></div></div>
     </div>
     {{ else }}
@@ -45,7 +45,7 @@
 {{ define "channel_details" }}
 {{ if eq .ViewMode "expanded" }}
 <!-- Expanded View -->
-<div class="view-expanded">
+<div class="view-expanded" data-rank="{{ .Rank }}">
     <!-- Header -->
     <div class="ts-grid is-middle-aligned has-top-spaced-small">
         <div class="column is-fluid">
@@ -56,16 +56,19 @@
         <div class="column">
             {{ if and .IsOnline (not .IsPaused) }}
             <span class="ts-badge is-small is-start-spaced">RECORDING</span>
-            {{ else if and (not .IsOnline) (not .IsPaused) }}
-            <span class="ts-badge is-secondary is-small is-start-spaced">OFFLINE</span>
             {{ else if .IsPaused }}
+            {{ if .IsAvailable }}<span class="ts-badge is-positive is-small is-start-spaced">LIVE</span>{{ end }}
             <span class="ts-badge is-negative is-small is-start-spaced">PAUSED</span>
+            {{ else if .IsAvailable }}
+            <span class="ts-badge is-positive is-small is-start-spaced">LIVE</span>
+            {{ else }}
+            <span class="ts-badge is-secondary is-small is-start-spaced">OFFLINE</span>
             {{ end }}
         </div>
     </div>
-    {{ if or .Gender (and .IsOnline .NumViewers) }}
+    {{ if or .Gender (and .Live .NumViewers) }}
     <div class="ts-meta has-top-spaced-small">
-        {{ if and .IsOnline .NumViewers }}<span class="item"><span class="ts-icon is-eye-icon"></span> {{ .NumViewers }}</span>{{ end }}
+        {{ if and .Live .NumViewers }}<span class="item"><span class="ts-icon is-eye-icon"></span> {{ .NumViewers }}</span>{{ end }}
         {{ if .Gender }}<span class="item">{{ if eq .Gender "f" }}♀ Female{{ else if eq .Gender "m" }}♂ Male{{ else if eq .Gender "t" }}⚧ Trans{{ else if eq .Gender "c" }}👫 Couple{{ else }}{{ .Gender }}{{ end }}</span>{{ end }}
     </div>
     {{ end }}
@@ -156,14 +159,15 @@
             </div>
             <div class="column">
                 {{ if and .IsOnline (not .IsPaused) }}<span class="ts-badge is-small">REC</span>
-                {{ else if .IsPaused }}<span class="ts-badge is-negative is-small">PAUSED</span>
+                {{ else if .IsPaused }}{{ if .IsAvailable }}<span class="ts-badge is-positive is-small">LIVE</span> {{ end }}<span class="ts-badge is-negative is-small">PAUSED</span>
+                {{ else if .IsAvailable }}<span class="ts-badge is-positive is-small">LIVE</span>
                 {{ else }}<span class="ts-badge is-secondary is-small">OFFLINE</span>{{ end }}
             </div>
         </div>
         {{ if .RoomTitle }}<div class="ts-text is-description is-small has-top-spaced-small grid-room-title">{{ .RoomTitle }}</div>{{ end }}
-        {{ if or .Gender (and .IsOnline .NumViewers) }}
+        {{ if or .Gender (and .Live .NumViewers) }}
         <div class="ts-meta has-top-spaced-small is-small">
-            {{ if and .IsOnline .NumViewers }}<span class="item"><span class="ts-icon is-eye-icon"></span> {{ .NumViewers }}</span>{{ end }}
+            {{ if and .Live .NumViewers }}<span class="item"><span class="ts-icon is-eye-icon"></span> {{ .NumViewers }}</span>{{ end }}
             {{ if .Gender }}<span class="item">{{ if eq .Gender "f" }}♀{{ else if eq .Gender "m" }}♂{{ else if eq .Gender "t" }}⚧{{ else if eq .Gender "c" }}👫{{ else }}{{ .Gender }}{{ end }}</span>{{ end }}
         </div>
         {{ end }}
@@ -194,12 +198,13 @@
     <div class="collapsed-name">
         <strong>{{ .Username }}</strong>
         {{ if and .IsOnline (not .IsPaused) }}<span class="ts-badge is-small is-start-spaced">REC</span>
-        {{ else if .IsPaused }}<span class="ts-badge is-negative is-small is-start-spaced">PAUSED</span>
+        {{ else if .IsPaused }}{{ if .IsAvailable }}<span class="ts-badge is-positive is-small is-start-spaced">LIVE</span>{{ end }}<span class="ts-badge is-negative is-small is-start-spaced">PAUSED</span>
+        {{ else if .IsAvailable }}<span class="ts-badge is-positive is-small is-start-spaced">LIVE</span>
         {{ else }}<span class="ts-badge is-secondary is-small is-start-spaced">OFFLINE</span>{{ end }}
     </div>
     {{ if .RoomTitle }}<div class="ts-text is-description is-small collapsed-title"><span>{{ .RoomTitle }}</span></div>{{ else }}<div class="collapsed-title"></div>{{ end }}
     {{ if .Gender }}<div class="ts-text is-small is-description collapsed-stat">{{ if eq .Gender "f" }}♀{{ else if eq .Gender "m" }}♂{{ else if eq .Gender "t" }}⚧{{ else if eq .Gender "c" }}👫{{ else }}{{ .Gender }}{{ end }}</div>{{ end }}
-    {{ if and .IsOnline .NumViewers }}<div class="ts-text is-small is-description collapsed-stat"><span class="ts-icon is-eye-icon"></span> {{ .NumViewers }}</div>{{ end }}
+    {{ if and .Live .NumViewers }}<div class="ts-text is-small is-description collapsed-stat"><span class="ts-icon is-eye-icon"></span> {{ .NumViewers }}</div>{{ end }}
     {{ if .Duration }}<div class="ts-text is-small is-description collapsed-stat">{{ .Duration }}</div>{{ end }}
     {{ if .Filesize }}<div class="ts-text is-small is-description collapsed-stat">{{ .Filesize }}</div>{{ end }}
     <div class="collapsed-actions">

@@ -81,8 +81,11 @@ func ChannelID(site, username string) string {
 type ChannelInfo struct {
 	ChannelID        string
 	ViewMode         string
-	IsOnline         bool
+	IsOnline         bool // recording (connected to the stream)
+	IsAvailable      bool // broadcasting right now, whether or not it is being recorded
 	IsPaused         bool
+	Rank             int    // 0 recording, 1 broadcasting but not recording, 2 the rest; the list is ordered by it
+	SortKey          string // lower-case "username site": the order inside a rank
 	Username         string
 	Duration         string
 	Filesize         string
@@ -103,6 +106,9 @@ type ChannelInfo struct {
 	Site             string // "chaturbate" (default) or "stripchat"
 	SiteDomain       string // pre-computed site URL, e.g. "https://chaturbate.com/" or "https://stripchat.com/"
 }
+
+// Live reports whether the channel is broadcasting (recorded or not).
+func (c *ChannelInfo) Live() bool { return c.IsOnline || c.IsAvailable }
 
 // Config holds the configuration for the application.
 type Config struct {

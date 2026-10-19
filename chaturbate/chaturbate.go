@@ -64,6 +64,31 @@ func (cb *Chaturbate) FetchStream(ctx context.Context, req *internal.Req, userna
 	}, nil
 }
 
+// FetchAvailability implements site.AvailabilitySource: one plain request to the
+// room API, with no browser fallback (a Cloudflare block is reported as an
+// error and the caller backs off).
+func (cb *Chaturbate) FetchAvailability(ctx context.Context, req *internal.Req, username string) (site.Availability, error) {
+	apiURL := fmt.Sprintf("%sapi/chatvideocontext/%s/", server.Config.Domain, username)
+	body, err := req.Get(ctx, apiURL)
+	if err != nil {
+		return site.Availability{}, err
+	}
+	// Only a clean JSON answer counts: an error page or the lobby page (what
+	// Chaturbate returns when it is overloaded) must not make a channel that is
+	// on air look offline, so anything else is "could not tell".
+	var resp apiResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		return site.Availability{}, fmt.Errorf("chaturbate: availability answer is not JSON: %w", err)
+	}
+	switch {
+	case resp.HLSSource != "":
+		return site.Availability{Live: true, NumViewers: resp.NumViewers}, nil
+	case resp.RoomStatus != "" || resp.Code != "":
+		return site.Availability{}, nil // offline, private, hidden, password-protected: cannot be recorded
+	}
+	return site.Availability{}, fmt.Errorf("chaturbate: availability answer has no room status")
+}
+
 // FetchLastBroadcast implements site.Site.
 func (cb *Chaturbate) FetchLastBroadcast(ctx context.Context, req *internal.Req, username string) (int64, error) {
 	return FetchLastBroadcast(ctx, req, username)

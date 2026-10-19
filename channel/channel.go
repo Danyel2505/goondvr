@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,7 +49,13 @@ type Channel struct {
 	// progress; the Publisher then uses uiUrgentInterval instead of uiMinInterval.
 	urgent [3]atomic.Bool
 
-	IsOnline            bool
+	IsOnline bool
+	// Available is true while the channel is broadcasting in public, recorded
+	// or not (see availability.go). Guarded by stateMu like IsOnline.
+	Available bool
+	// lastProbe is when the availability of a paused channel was last asked
+	// for (unix nanoseconds, 0 = never).
+	lastProbe           atomic.Int64
 	StreamedAt          int64
 	Duration            float64 // Seconds
 	Filesize            int     // Bytes
@@ -240,6 +247,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	ch.fileMu.RUnlock()
 	ch.stateMu.RLock()
 	isOnline, roomTitle, gender, numViewers := ch.IsOnline, ch.RoomTitle, ch.Gender, ch.NumViewers
+	available := ch.Available || ch.IsOnline
 	edgeRegion, summaryCard, liveThumb := ch.EdgeRegion, ch.SummaryCardImage, ch.LiveThumbURL
 	streamedAtUnix := ch.StreamedAt
 	ch.stateMu.RUnlock()
@@ -262,9 +270,19 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		site = "chaturbate"
 	}
 
+	rank := 2
+	if isOnline {
+		rank = 0
+	} else if available {
+		rank = 1
+	}
+
 	return &entity.ChannelInfo{
 		ChannelID:        entity.ChannelID(ch.Config.Site, ch.Config.Username),
 		IsOnline:         isOnline,
+		IsAvailable:      available,
+		Rank:             rank,
+		SortKey:          strings.ToLower(ch.Config.Username) + " " + strings.ToLower(site),
 		IsPaused:         ch.isPaused(), // Pause/Resume write it under monitorMu
 		Username:         ch.Config.Username,
 		MaxDuration:      internal.FormatDuration(float64(ch.Config.MaxDuration * 60)), // MaxDuration from config is in minutes
@@ -357,7 +375,9 @@ func (ch *Channel) Resume(startSeq int) {
 func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 	ch.stateMu.Lock()
 	ch.IsOnline = isOnline
-	if !isOnline {
+	if isOnline {
+		ch.Available = true // it is being recorded, so it is on air
+	} else {
 		ch.NumViewers = 0
 	}
 	ch.stateMu.Unlock()

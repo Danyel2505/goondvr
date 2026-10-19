@@ -77,6 +77,14 @@ func (ch *Channel) Monitor(runID uint64) {
 				errors.Is(err, internal.ErrRoomPasswordRequired)
 		}
 		onRetry := func(_ uint, err error) {
+			// The site said the channel is not broadcasting in public (a hidden or
+			// private show cannot be recorded either): it is no longer "available".
+			// Cancellation (pause) and transient errors say nothing about it.
+			if errors.Is(err, internal.ErrChannelOffline) ||
+				errors.Is(err, internal.ErrPrivateStream) ||
+				errors.Is(err, internal.ErrHiddenStream) {
+				ch.setAvailable(false)
+			}
 			ch.UpdateOnlineStatus(false)
 
 			// Reset CF block count whenever a non-CF response is received.

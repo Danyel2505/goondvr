@@ -48,6 +48,7 @@ func New() (*Manager, error) {
 	m.startTime = time.Now()
 	m.cfBlocks = make(map[string]time.Time)
 	go m.diskMonitor()
+	go m.availabilityLoop()
 
 	// Keep-alive for the SSE connections. It is an SSE *comment*: browsers ignore
 	// it, but dead connections are noticed and proxies keep the stream open. (It
@@ -587,15 +588,14 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	})
 
 	sort.Slice(channels, func(i, j int) bool {
-		// First priority: Online channels
-		if channels[i].IsOnline != channels[j].IsOnline {
-			return channels[i].IsOnline
+		// First priority: recording, then broadcasting but not recorded, then the rest.
+		if channels[i].Rank != channels[j].Rank {
+			return channels[i].Rank < channels[j].Rank
 		}
-		// Second priority: Alphabetical order by username, then site.
-		if strings.ToLower(channels[i].Username) != strings.ToLower(channels[j].Username) {
-			return strings.ToLower(channels[i].Username) < strings.ToLower(channels[j].Username)
-		}
-		return strings.ToLower(channels[i].Site) < strings.ToLower(channels[j].Site)
+		// Second priority: Alphabetical order by username, then site (SortKey is
+		// "username site" in lower case; ' ' sorts before every character a username
+		// can contain, so a shorter username always comes first).
+		return channels[i].SortKey < channels[j].SortKey
 	})
 
 	return channels
