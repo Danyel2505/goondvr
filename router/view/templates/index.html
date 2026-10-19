@@ -1009,65 +1009,103 @@
                     }
                 });
                 // Cards of the view that just became visible were not updated while hidden.
-                flushPendingLogs();
+                flushVisibleCards();
                 initThumbSwitchers();
                 initMarquees();
             }
 
 
-            // Log text received while the expanded view (the only one that shows
-            // logs) is hidden: textarea -> latest text, applied by setView().
-            const pendingLogs = new Map();
+            // ---- Updates only for cards that can be seen -------------------------
+            // With dozens of channels the server sends dozens of card redraws and log
+            // rewrites per second. Redrawing cards nobody can see is what made the page
+            // grind to a halt (rewriting the log text areas alone took half of the
+            // processor). An update for a card that is off screen is only remembered
+            // (the latest one per card) and applied when the card is scrolled into view.
+            const visibleCards = new Set();   // [sse-swap] elements near the viewport
+            const pendingCards = new Map();   // element -> latest html / log text received while it was not visible
+            const cardObserver = ('IntersectionObserver' in window)
+                ? new IntersectionObserver(entries => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            visibleCards.add(entry.target);
+                            applyPendingCard(entry.target);
+                        } else {
+                            visibleCards.delete(entry.target);
+                        }
+                    });
+                }, { rootMargin: '400px' })
+                : null;
+            if (cardObserver) document.querySelectorAll('[sse-swap]').forEach(el => cardObserver.observe(el));
 
+            function isCardVisible(elt) { return !cardObserver || visibleCards.has(elt); }
+
+            // Log text areas are written together, once per frame: one layout for all of
+            // them instead of one for each (reading scrollHeight forces a layout).
+            const logQueue = new Map();
+            let logFlushScheduled = false;
             function writeLog(textarea, text) {
-                textarea.value = text;
-                textarea.scrollTop = textarea.scrollHeight;
+                logQueue.set(textarea, text);
+                if (logFlushScheduled) return;
+                logFlushScheduled = true;
+                requestAnimationFrame(function () {
+                    logFlushScheduled = false;
+                    const batch = Array.from(logQueue);
+                    logQueue.clear();
+                    batch.forEach(([ta, t]) => { if (ta.value !== t) ta.value = t; });
+                    batch.forEach(([ta]) => { ta.scrollTop = ta.scrollHeight; });
+                });
             }
 
-            function flushPendingLogs() {
-                if (currentView !== 'expanded') return;
-                pendingLogs.forEach((text, textarea) => writeLog(textarea, text));
-                pendingLogs.clear();
+            // Shows an update on its card now.
+            function applyCardUpdate(elt, data) {
+                const id = elt.getAttribute('sse-swap') || '';
+                if (id.endsWith('-log')) { writeLog(elt, data); return; }
+                if (id.endsWith('-thumb') &&
+                    thumbSignatureOfHtml(data) === thumbSignature(elt.querySelectorAll('.img-switcher'))) {
+                    return; // same pictures as before (typical after a reconnect): leave the cards alone
+                }
+                elt.innerHTML = data;
+                htmx.process(elt); // the new buttons need their hx-* attributes processed
+                if (id.endsWith('-info')) { scheduleStats(); initMarquees(elt); }
+                else if (id.endsWith('-thumb')) initThumbSwitchers(elt);
             }
 
-            // Before content is swapped by HTMX.
-            // Log events carry the whole log as plain text: write it straight into
-            // the textarea instead of letting htmx parse and swap it as HTML.
+            // Entry point of every update of a card: applied now if the card can be
+            // seen, remembered otherwise.
+            function deliverCard(elt, data) {
+                const id = elt.getAttribute('sse-swap') || '';
+                elt._updatedAt = Date.now(); // lets watchPendingButton know that the server reported this card
+                if (id.endsWith('-log')) {
+                    const box = elt.closest('.ts-box');
+                    const autoUpdate = box && box.querySelector('[type=checkbox]');
+                    if (autoUpdate && !autoUpdate.checked) return; // "Auto-Update & Scroll Logs" is off
+                }
+                if (isCardVisible(elt)) {
+                    pendingCards.delete(elt);
+                    applyCardUpdate(elt, data);
+                } else {
+                    pendingCards.set(elt, data);
+                }
+            }
+
+            function applyPendingCard(elt) {
+                if (!pendingCards.has(elt)) return;
+                const data = pendingCards.get(elt);
+                pendingCards.delete(elt);
+                applyCardUpdate(elt, data);
+            }
+
+            function flushVisibleCards() {
+                Array.from(pendingCards.keys()).forEach(elt => { if (isCardVisible(elt)) applyPendingCard(elt); });
+            }
+
+            // Every card update arrives here. htmx would parse and swap it for every
+            // card, seen or not; the page does it itself, only where it is needed.
             document.body.addEventListener("htmx:sseBeforeMessage", function (e) {
                 const elt = e.detail.elt;
-                const swapId = elt && elt.getAttribute('sse-swap');
-                if (swapId && swapId.endsWith("-thumb")) {
-                    // The same pictures are available as before (typical after a
-                    // reconnect): leave the cards alone instead of redrawing them.
-                    if (thumbSignatureOfHtml(e.detail.data) === thumbSignature(elt.querySelectorAll('.img-switcher'))) {
-                        e.preventDefault();
-                    }
-                    return;
-                }
-                if (!swapId || !swapId.endsWith("-log")) return;
-
+                if (!elt || !elt.getAttribute('sse-swap')) return;
                 e.preventDefault();
-                const box = elt.closest(".ts-box");
-                const autoUpdate = box && box.querySelector("[type=checkbox]");
-                if (autoUpdate && !autoUpdate.checked) return; // "Auto-Update & Scroll Logs" is off
-                if (currentView !== 'expanded') {
-                    pendingLogs.set(elt, e.detail.data);
-                    return;
-                }
-                writeLog(elt, e.detail.data);
-            })
-
-            // After content was swapped by HTMX: only touch the part that changed.
-            document.body.addEventListener("htmx:sseMessage", function (e) {
-                const elt = e.detail.elt;
-                const swapId = elt && elt.getAttribute('sse-swap');
-                if (!swapId) return;
-                if (swapId.endsWith("-info")) {
-                    scheduleStats();
-                    initMarquees(elt);
-                } else if (swapId.endsWith("-thumb")) {
-                    initThumbSwitchers(elt);
-                }
+                deliverCard(elt, e.detail.data);
             })
 
             document.body.addEventListener("htmx:beforeRequest", function (e) {
@@ -1105,14 +1143,16 @@
                 }
             });
 
-            // After a successful Pause/Resume the card is redrawn by the event
-            // stream, normally within a fraction of a second, which replaces the
-            // button. If the button is still there after a few seconds that update
-            // never arrived (connection hiccup): fetch the current state instead of
-            // leaving "Resuming..." on screen for ever.
+            // After a successful Pause/Resume the server reports the new state of the
+            // card through the event stream, normally within a fraction of a second.
+            // If nothing at all arrived for the card after the click, that update was
+            // lost (connection hiccup): fetch the current state instead of leaving
+            // "Resuming..." (or the old state) on screen for ever.
             function watchPendingButton(btn) {
+                const card = btn.closest('[sse-swap]');
+                const clickedAt = Date.now();
                 setTimeout(async function () {
-                    if (!document.body.contains(btn)) return; // redrawn: the normal case
+                    if (card && (card._updatedAt || 0) > clickedAt) return; // the server reported the card after the click: the normal case
                     await resyncCards();
                     if (document.body.contains(btn)) restoreButton(btn); // state unchanged
                 }, 4000);
@@ -1132,20 +1172,7 @@
                         const id = src.getAttribute('sse-swap');
                         const dst = document.querySelector('[sse-swap="' + id + '"]');
                         if (!dst) return; // channel added/removed elsewhere: a page load handles that
-                        if (id.endsWith('-log')) {
-                            const box = dst.closest('.ts-box');
-                            const auto = box && box.querySelector('[type=checkbox]');
-                            if (auto && !auto.checked) return;
-                            if (currentView === 'expanded') writeLog(dst, src.value);
-                            else pendingLogs.set(dst, src.value);
-                            return;
-                        }
-                        if (id.endsWith('-thumb') &&
-                            thumbSignature(src.querySelectorAll('.img-switcher')) === thumbSignature(dst.querySelectorAll('.img-switcher'))) return;
-                        dst.innerHTML = src.innerHTML;
-                        htmx.process(dst);
-                        if (id.endsWith('-info')) initMarquees(dst);
-                        else if (id.endsWith('-thumb')) initThumbSwitchers(dst);
+                        deliverCard(dst, id.endsWith('-log') ? src.value : src.innerHTML);
                     });
                     scheduleStats();
                 } catch (err) { /* offline: the next reconnect resyncs */ }
