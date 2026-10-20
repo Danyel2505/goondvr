@@ -765,17 +765,27 @@
             }
 
             // At most THUMB_PARALLEL images load at once; the rest wait their turn.
+            const THUMB_STALE = new Error('thumbnail no longer wanted');
             const thumbQueue = [];
             let thumbActive = 0;
-            function enqueueThumbLoad(src) {
+            // The newest request goes first (the card that was scrolled into view last is the
+            // one most likely still on screen) and a request whose card has left the
+            // screen while it waited is dropped without downloading anything.
+            function enqueueThumbLoad(src, channelID) {
                 return new Promise((resolve, reject) => {
-                    thumbQueue.push({ src, resolve, reject });
+                    thumbQueue.push({ src, channelID, resolve, reject });
                     pumpThumbQueue();
                 });
             }
+            function thumbStillWanted(channelID) {
+                if (!channelID || !thumbObserver) return true;
+                for (const s of visibleSwitchers) if (s.dataset.channelId === channelID && s.isConnected) return true;
+                return false;
+            }
             function pumpThumbQueue() {
                 while (thumbActive < THUMB_PARALLEL && thumbQueue.length) {
-                    const job = thumbQueue.shift();
+                    const job = thumbQueue.pop();
+                    if (!thumbStillWanted(job.channelID)) { job.reject(THUMB_STALE); continue; }
                     thumbActive++;
                     loadImage(job.src).then(job.resolve, job.reject).then(() => {
                         thumbActive--;
@@ -864,12 +874,13 @@
                     // per address); `r` changes after a failure so a bad answer is not reused.
                     const src = LIVE_THUMB_URL(switcher.dataset.username, switcher.dataset.site || 'chaturbate', channelID)
                         + '?' + Math.floor(now / 5000) + (st.fails ? '&r=' + st.fails : '');
-                    enqueueThumbLoad(src).then(() => {
+                    enqueueThumbLoad(src, channelID).then(() => {
                         st.live = src;
                         st.fails = 0;
                         st.loadedAt = Date.now();
                         repaintChannel(channelID);
-                    }, () => {
+                    }, err => {
+                        if (err === THUMB_STALE) return; // it left the screen while it waited: not a failure
                         st.fails++;
                         st.failAt = Date.now();
                     }).then(() => { st.loading = false; });
@@ -879,9 +890,10 @@
                     if (c.url !== url) { c.url = url; c.ok = false; c.loading = false; c.fails = 0; c.retryAt = 0; }
                     if (c.ok || c.loading || now < c.retryAt) return;
                     c.loading = true;
-                    enqueueThumbLoad(url).then(() => {
+                    enqueueThumbLoad(url, channelID).then(() => {
                         if (c.url === url) { c.ok = true; repaintChannel(channelID); }
-                    }, () => {
+                    }, err => {
+                        if (err === THUMB_STALE) return;
                         c.fails++;
                         c.retryAt = Date.now() + Math.min(60000, 5000 * c.fails);
                     }).then(() => { if (c.url === url) c.loading = false; });
@@ -899,7 +911,7 @@
                     entries.forEach(entry => {
                         if (entry.isIntersecting) {
                             focusSwitchers.add(entry.target);
-                            ensureThumb(entry.target, now); // looked at now: its picture may be due sooner than it was
+                            if (!flicking) ensureThumb(entry.target, now); // looked at now: its picture may be due sooner than it was
                         } else {
                             focusSwitchers.delete(entry.target);
                         }
@@ -913,7 +925,7 @@
                         if (entry.isIntersecting) {
                             visibleSwitchers.add(entry.target);
                             paintThumb(entry.target);
-                            ensureThumb(entry.target, now); // scrolled into view: do not wait for the next tick
+                            if (!flicking) ensureThumb(entry.target, now); // scrolled into view: do not wait for the next tick
                         } else {
                             visibleSwitchers.delete(entry.target);
                             focusSwitchers.delete(entry.target);
@@ -923,7 +935,7 @@
                 : null;
 
             function tickThumbs() {
-                if (document.hidden) return;
+                if (document.hidden || flicking) return;
                 const now = Date.now();
                 let onScreen = 0;
                 focusSwitchers.forEach(s => { if (s.dataset.isLive.trim() === 'true') onScreen++; });
@@ -1061,6 +1073,39 @@
             // grind to a halt (rewriting the log text areas alone took half of the
             // processor). An update for a card that is off screen is only remembered
             // (the latest one per card) and applied when the card is scrolled into view.
+            //
+            // While the page is being flicked through (fast scroll) the cards that pass
+            // through the window are not worth redrawing or loading pictures for: they are
+            // gone before they can be read. Their updates wait (they are already remembered)
+            // and are applied for the cards that are in the window when the scroll slows
+            // down or stops, so the page reacts to what is on screen now instead of working
+            // through everything it passed.
+            const FLICK_PX_PER_S = 1500;      // faster than this counts as a flick
+            const FLICK_END_MS = 140;         // no scroll event for this long: the flick is over
+            let lastScrollAt = 0, flicking = false, flickTimer = 0;
+            let speedY = window.scrollY, speedT = performance.now();
+            window.addEventListener('scroll', function () {
+                const now = performance.now();
+                lastScrollAt = Date.now();
+                if (now - speedT >= 50) { // speed over the last >= 50 ms
+                    const was = flicking;
+                    flicking = Math.abs(window.scrollY - speedY) / (now - speedT) * 1000 > FLICK_PX_PER_S;
+                    speedY = window.scrollY; speedT = now;
+                    if (was && !flicking) setTimeout(afterFlick, 0); // slowed down: catch up outside the scroll event
+                }
+                if (flicking && !flickTimer) flickTimer = setTimeout(checkFlickEnd, FLICK_END_MS);
+            }, { passive: true });
+            function afterFlick() {
+                flushVisibleCards(); // the cards that ended up on screen catch up now
+                tickThumbs();
+            }
+            function checkFlickEnd() {
+                flickTimer = 0;
+                const quiet = Date.now() - lastScrollAt;
+                if (quiet < FLICK_END_MS) { flickTimer = setTimeout(checkFlickEnd, FLICK_END_MS - quiet); return; }
+                if (flicking) { flicking = false; afterFlick(); }
+            }
+
             const visibleCards = new Set();   // [sse-swap] elements near the viewport
             const pendingCards = new Map();   // element -> latest html / log text received while it was not visible
             const cardObserver = ('IntersectionObserver' in window)
@@ -1068,7 +1113,7 @@
                     entries.forEach(entry => {
                         if (entry.isIntersecting) {
                             visibleCards.add(entry.target);
-                            applyPendingCard(entry.target);
+                            if (!flicking) applyPendingCard(entry.target);
                         } else {
                             visibleCards.delete(entry.target);
                         }
@@ -1077,7 +1122,7 @@
                 : null;
             if (cardObserver) document.querySelectorAll('[sse-swap]').forEach(el => cardObserver.observe(el));
 
-            function isCardVisible(elt) { return !cardObserver || visibleCards.has(elt); }
+            function isCardVisible(elt) { return (!cardObserver || visibleCards.has(elt)) && !flicking; }
 
             // Log text areas are written together, once per frame: one layout for all of
             // them instead of one for each (reading scrollHeight forces a layout).
@@ -1096,6 +1141,76 @@
                 });
             }
 
+            // ---- Patching a card instead of rebuilding it ------------------------
+            // An update of a card is nearly always the same markup with a few new numbers
+            // (duration, size, viewers). Rebuilding the card with innerHTML recreates
+            // about a hundred elements and makes the browser restyle and lay out the card
+            // every time, which is what made scrolling through many cards stutter. The new
+            // markup is parsed inertly (no style, no layout) and only what differs is
+            // written into the live card. Anything that really changes shape (the Pause
+            // button becoming Resume, a new title) is replaced and processed by htmx again.
+            function syncAttrs(oldN, newN) {
+                const na = newN.attributes, oa = oldN.attributes;
+                // htmx reads hx-* attributes when it processes an element: if they differ
+                // the element has to be replaced and processed again.
+                for (let i = 0; i < na.length; i++) {
+                    if (na[i].name.startsWith('hx-') && oldN.getAttribute(na[i].name) !== na[i].value) return false;
+                }
+                for (let i = 0; i < oa.length; i++) {
+                    if (oa[i].name.startsWith('hx-') && !newN.hasAttribute(oa[i].name)) return false;
+                }
+                for (let i = 0; i < na.length; i++) {
+                    if (oldN.getAttribute(na[i].name) !== na[i].value) oldN.setAttribute(na[i].name, na[i].value);
+                }
+                for (let i = oa.length - 1; i >= 0; i--) {
+                    if (!newN.hasAttribute(oa[i].name)) oldN.removeAttribute(oa[i].name);
+                }
+                return true;
+            }
+
+            function replaceContents(oldParent, newParent, ctx) {
+                oldParent.replaceChildren(...Array.from(newParent.childNodes));
+                ctx.process.push(oldParent);
+                ctx.marquee = true;
+            }
+
+            function patchChildren(oldParent, newParent, ctx) {
+                const o = Array.from(oldParent.childNodes), n = Array.from(newParent.childNodes);
+                if (o.length !== n.length) { replaceContents(oldParent, newParent, ctx); return; }
+                for (let i = 0; i < n.length; i++) patchNode(o[i], n[i], ctx);
+            }
+
+            function patchNode(oldN, newN, ctx) {
+                if (oldN.nodeType !== newN.nodeType || oldN.nodeName !== newN.nodeName) {
+                    oldN.replaceWith(newN);
+                    if (newN.nodeType === 1) ctx.process.push(newN);
+                    ctx.marquee = true;
+                    return;
+                }
+                if (oldN.nodeType === 3 || oldN.nodeType === 8) { // text, comment
+                    if (oldN.nodeValue !== newN.nodeValue) oldN.nodeValue = newN.nodeValue;
+                    return;
+                }
+                if (oldN.nodeType !== 1) return;
+                if (oldN.classList.contains('collapsed-title')) {
+                    // The marquee rewrites the inside of the title: compare the text only.
+                    const text = el => { const sp = el.querySelector('span'); return sp ? sp.textContent : ''; };
+                    if (text(oldN) !== text(newN)) { replaceContents(oldN, newN, ctx); ctx.marquee = true; }
+                    return;
+                }
+                if (!syncAttrs(oldN, newN)) { oldN.replaceWith(newN); ctx.process.push(newN); ctx.marquee = true; return; }
+                patchChildren(oldN, newN, ctx);
+            }
+
+            function patchCard(elt, html) {
+                const tpl = document.createElement('template');
+                tpl.innerHTML = html;
+                const ctx = { process: [], marquee: false };
+                patchChildren(elt, tpl.content, ctx);
+                ctx.process.forEach(function (node) { if (node.isConnected) htmx.process(node); }); // new buttons need their hx-* processed
+                return ctx;
+            }
+
             // Shows an update on its card now.
             function applyCardUpdate(elt, data) {
                 const id = elt.getAttribute('sse-swap') || '';
@@ -1104,10 +1219,15 @@
                     thumbSignatureOfHtml(data) === thumbSignature(elt.querySelectorAll('.img-switcher'))) {
                     return; // same pictures as before (typical after a reconnect): leave the cards alone
                 }
+                if (id.endsWith('-info')) {
+                    const ctx = patchCard(elt, data);
+                    scheduleStats();
+                    if (ctx.marquee) initMarquees(elt);
+                    return;
+                }
                 elt.innerHTML = data;
                 htmx.process(elt); // the new buttons need their hx-* attributes processed
-                if (id.endsWith('-info')) { scheduleStats(); initMarquees(elt); }
-                else if (id.endsWith('-thumb')) initThumbSwitchers(elt);
+                if (id.endsWith('-thumb')) initThumbSwitchers(elt);
             }
 
             // Entry point of every update of a card: applied now if the card can be
@@ -1139,6 +1259,7 @@
             function flushVisibleCards() {
                 Array.from(pendingCards.keys()).forEach(elt => { if (isCardVisible(elt)) applyPendingCard(elt); });
             }
+            // (isCardVisible is false while flicking, so nothing is applied until the flick is over.)
 
             // ---- Live order of the list --------------------------------------------
             // The server numbers every card: 0 recording, 1 on air but not recorded,
@@ -1158,10 +1279,9 @@
             const REORDER_MAX_ANIMATED = 40;    // more than this: the rest just move
             const reducedMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
             let reorderTimer = 0, reorderSince = 0;
-            let lastScrollAt = 0, lastPointerAt = 0;
+            let lastPointerAt = 0;
             let reorderAnims = [];
 
-            window.addEventListener('scroll', function () { lastScrollAt = Date.now(); }, { passive: true });
             ['pointerdown', 'keydown'].forEach(function (type) {
                 window.addEventListener(type, function () { lastPointerAt = Date.now(); }, { passive: true, capture: true });
             });
