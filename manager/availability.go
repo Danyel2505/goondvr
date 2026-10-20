@@ -41,6 +41,11 @@ func (m *Manager) availabilityLoop() {
 			time.Sleep(availIdlePoll)
 			continue
 		}
+		if m.cloudflareBlockedRecently() {
+			// The channels being recorded are already being blocked: do not add to it.
+			time.Sleep(availIdlePoll)
+			continue
+		}
 		ch, last, n := m.nextProbeCandidate()
 		if ch == nil {
 			time.Sleep(availIdlePoll)
@@ -103,4 +108,21 @@ func (m *Manager) nextProbeCandidate() (best *channel.Channel, bestLast int64, n
 		return true
 	})
 	return best, bestLast, n
+}
+
+// availCFQuiet is how long after the last Cloudflare block reported by a
+// channel the watcher stays silent.
+const availCFQuiet = 5 * time.Minute
+
+// cloudflareBlockedRecently reports whether any channel was blocked by
+// Cloudflare in the last availCFQuiet.
+func (m *Manager) cloudflareBlockedRecently() bool {
+	m.cfBlocksMu.Lock()
+	defer m.cfBlocksMu.Unlock()
+	for _, t := range m.cfBlocks {
+		if time.Since(t) < availCFQuiet {
+			return true
+		}
+	}
+	return false
 }

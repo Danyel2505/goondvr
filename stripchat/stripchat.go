@@ -116,6 +116,13 @@ func (s *Stripchat) FetchLiveThumbURL(ctx context.Context, req *internal.Req, us
 // cam API (never the browser fallback).
 func (s *Stripchat) FetchAvailability(ctx context.Context, req *internal.Req, username string) (site.Availability, error) {
 	info, err := fetchStreamViaLegacyAPI(ctx, req, username)
+	return availabilityFrom(info, err)
+}
+
+// availabilityFrom turns the answer of the cam API into an Availability:
+// offline and private rooms are "not available", anything else that failed is
+// "could not tell".
+func availabilityFrom(info *site.StreamInfo, err error) (site.Availability, error) {
 	switch {
 	case err == nil && info != nil:
 		return site.Availability{Live: true, NumViewers: info.NumViewers, LiveThumbURL: info.LiveThumbURL}, nil

@@ -2,6 +2,7 @@ package manager
 
 import (
 	"testing"
+	"time"
 )
 
 func TestProbeSpacingStaysLightAndAdapts(t *testing.T) {
@@ -23,5 +24,20 @@ func TestProbeSpacingStaysLightAndAdapts(t *testing.T) {
 	}
 	if d := probeSpacing(0, false); d <= 0 {
 		t.Fatalf("no channels: spacing %v", d)
+	}
+}
+
+func TestWatcherStaysSilentWhileChannelsAreBlockedByCloudflare(t *testing.T) {
+	m := &Manager{cfBlocks: map[string]time.Time{}}
+	if m.cloudflareBlockedRecently() {
+		t.Fatal("no block reported yet")
+	}
+	m.cfBlocks["someone"] = time.Now()
+	if !m.cloudflareBlockedRecently() {
+		t.Fatal("a fresh block must silence the watcher")
+	}
+	m.cfBlocks["someone"] = time.Now().Add(-availCFQuiet - time.Second)
+	if m.cloudflareBlockedRecently() {
+		t.Fatal("an old block must not silence the watcher for ever")
 	}
 }
