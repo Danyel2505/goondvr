@@ -157,4 +157,9 @@ type Config struct {
 	NotifyCooldownHours int // hours between repeated alerts of the same type; default 4
 	NotifyStreamOnline  bool
 	StripchatPDKey      string // MOUFLON v2 decryption key; auto-extracted or manual override
+
+	// Detection of the channels on the air (see manager/presence.go).
+	PresenceCampaign string // Chaturbate affiliate (campaign) id for the list of rooms on the air; empty = list not used
+	PresenceListURL  string // advanced: full address of a list of rooms on the air (siren "users_online_endpoint")
+	PresenceInterval int    // seconds between two sweeps of the list; default 60
 }

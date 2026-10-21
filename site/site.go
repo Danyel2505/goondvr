@@ -2,6 +2,7 @@ package site
 
 import (
 	"context"
+	"errors"
 
 	"github.com/HeapOfChaos/goondvr/internal"
 )
@@ -45,6 +46,35 @@ type AvailabilitySource interface {
 	// the web UI open. An error means "could not tell" (the previous answer is
 	// kept); a channel that is offline, private or hidden is not an error.
 	FetchAvailability(ctx context.Context, req *internal.Req, username string) (Availability, error)
+}
+
+// ErrListNotConfigured is returned by OnlineListSource.ListOnline when the list
+// cannot be used until the user configures it (for example, an affiliate id).
+// It is not a failure: the manager just keeps using the per-channel method.
+var ErrListNotConfigured = errors.New("online list is not configured")
+
+// Presence is what a site says about one channel in its list of rooms on the air.
+type Presence struct {
+	Live       bool     // broadcasting in public, i.e. it could be recorded
+	Show       string   // the site's own word for the show: public, private, group, hidden, away...
+	NumViewers int      // 0 when unknown
+	Subject    string   // room subject, when the list carries it
+	Tags       []string // the room's tags (lower case), when the list carries them
+}
+
+// OnlineListSource is implemented by sites that can say, with one request (or a
+// few pages of one list), which of many channels are on the air. This is the
+// main way the manager keeps the "on air" mark of every channel up to date
+// without a browser being open; the per-channel AvailabilitySource is the
+// fallback when it fails.
+type OnlineListSource interface {
+	// ListOnline returns the presence of the wanted channels that are on the air,
+	// keyed by lower-case username. want holds lower-case usernames (never empty).
+	// A channel that is not in the answer is off the air, so any failure, and any
+	// answer that cannot be trusted to be complete, must be an error; Cloudflare
+	// blocks are reported as internal.ErrCloudflareBlocked. It must never use the
+	// browser fallback.
+	ListOnline(ctx context.Context, req *internal.Req, want map[string]struct{}) (map[string]Presence, error)
 }
 
 // Site defines the interface a streaming platform must implement.
