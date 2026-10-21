@@ -41,8 +41,8 @@ func TestProbeMarksAPausedChannelAsAvailableAndBack(t *testing.T) {
 	req := internal.NewReq()
 	ctx := t.Context()
 
-	if info := ch.ExportInfo(); info.Rank != 2 || info.IsAvailable {
-		t.Fatalf("a new paused channel must be rank 2, got rank %d available %v", info.Rank, info.IsAvailable)
+	if info := ch.ExportInfo(); info.Rank != 3 || info.IsAvailable {
+		t.Fatalf("a new paused channel must be rank 3, got rank %d available %v", info.Rank, info.IsAvailable)
 	}
 	if err := ch.ProbeAvailability(ctx, req); err != nil {
 		t.Fatal(err)
@@ -59,7 +59,7 @@ func TestProbeMarksAPausedChannelAsAvailableAndBack(t *testing.T) {
 	if err := ch.ProbeAvailability(ctx, req); err != nil {
 		t.Fatal(err)
 	}
-	if info := ch.ExportInfo(); info.Rank != 2 || info.IsAvailable || info.NumViewers != 0 {
+	if info := ch.ExportInfo(); info.Rank != 3 || info.IsAvailable || info.NumViewers != 0 {
 		t.Fatalf("private show: want rank 2, got %+v", info)
 	}
 	body.Store(roomLive)
@@ -122,6 +122,25 @@ func TestRankAndSortKeyOrderTheList(t *testing.T) {
 	for i := 1; i < len(keys); i++ {
 		if !(keys[i-1] < keys[i]) && keys[i-1] != "ab-c chaturbate" {
 			t.Fatalf("%q must sort before %q", keys[i-1], keys[i])
+		}
+	}
+}
+
+func TestRankOfTheFourSections(t *testing.T) {
+	cases := []struct {
+		online, onAir, paused bool
+		want                  int
+	}{
+		{true, true, false, RankRecording},
+		{true, true, true, RankRecording}, // being recorded wins over everything
+		{false, true, true, RankOnAir},    // on air, paused: shown as "on air"
+		{false, true, false, RankOnAir},
+		{false, false, false, RankRetrying}, // off air but the monitor keeps trying
+		{false, false, true, RankPaused},
+	}
+	for _, c := range cases {
+		if got := RankOf(c.online, c.onAir, c.paused); got != c.want {
+			t.Errorf("RankOf(%v,%v,%v) = %d, want %d", c.online, c.onAir, c.paused, got, c.want)
 		}
 	}
 }

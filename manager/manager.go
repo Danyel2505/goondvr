@@ -50,6 +50,7 @@ func New() (*Manager, error) {
 	m := &Manager{hub: newHub()}
 	m.startTime = time.Now()
 	m.cfBlocks = make(map[string]time.Time)
+	m.presence.kick = make(chan struct{}, 1)
 	go m.diskMonitor()
 	go m.presenceLoop()
 
@@ -550,6 +551,7 @@ func (m *Manager) LoadConfig() error {
 		}
 		go ch.Resume(i)
 	}
+	m.kickPresence() // find out right away which of them are on the air
 	return nil
 }
 
@@ -581,6 +583,7 @@ func (m *Manager) CreateChannel(conf *entity.ChannelConfig, shouldSave bool) err
 	m.Channels.Store(channelID, ch)
 
 	go ch.Resume(0)
+	m.kickPresence()
 
 	if shouldSave {
 		if err := m.SaveConfig(); err != nil {
@@ -644,7 +647,7 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 	})
 
 	sort.Slice(channels, func(i, j int) bool {
-		// First priority: recording, then broadcasting but not recorded, then the rest.
+		// First priority: the section (recording, on air, retrying, paused).
 		if channels[i].Rank != channels[j].Rank {
 			return channels[i].Rank < channels[j].Rank
 		}
@@ -653,6 +656,9 @@ func (m *Manager) ChannelInfo() []*entity.ChannelInfo {
 		// can contain, so a shorter username always comes first).
 		return channels[i].SortKey < channels[j].SortKey
 	})
+	for i, c := range channels {
+		c.SectionStart = i == 0 || channels[i-1].Rank != c.Rank
+	}
 
 	return channels
 }

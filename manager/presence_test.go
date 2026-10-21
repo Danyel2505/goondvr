@@ -14,6 +14,7 @@ import (
 	"github.com/HeapOfChaos/goondvr/entity"
 	"github.com/HeapOfChaos/goondvr/internal"
 	"github.com/HeapOfChaos/goondvr/server"
+	"github.com/HeapOfChaos/goondvr/site"
 )
 
 // fakeSite is a Chaturbate that answers the list and the per-channel API.
@@ -233,5 +234,33 @@ func TestProbeSpacingStaysLightAndAdapts(t *testing.T) {
 	d := probeSpacing(90, probeWorkers, false)
 	if round := d * 30; round < probeCycle*2/3 || round > probeCycle*3/2 {
 		t.Fatalf("90 channels, 3 at a time: a full round takes %v, want about %v", round, probeCycle)
+	}
+}
+
+func TestChannelInfoMarksTheStartOfEverySection(t *testing.T) {
+	m, _, _ := presenceRig(t, "", "bob", "alice", "carol", "dave")
+	set := func(name string, paused, onAir bool) {
+		v, _ := m.Channels.Load(entity.ChannelID("chaturbate", name))
+		ch := v.(*channel.Channel)
+		ch.SetPaused(paused)
+		ch.ApplyPresence(&site.Presence{Live: onAir})
+	}
+	set("alice", true, true)  // on air
+	set("bob", true, false)   // paused
+	set("carol", false, true) // on air (not paused)
+	set("dave", false, false) // retrying
+
+	var order, starts []string
+	for _, c := range m.ChannelInfo() {
+		order = append(order, c.Username)
+		if c.SectionStart {
+			starts = append(starts, c.Username)
+		}
+	}
+	if strings.Join(order, ",") != "alice,carol,dave,bob" {
+		t.Fatalf("order %v", order)
+	}
+	if strings.Join(starts, ",") != "alice,dave,bob" {
+		t.Fatalf("section starts %v", starts)
 	}
 }

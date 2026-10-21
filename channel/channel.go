@@ -238,6 +238,27 @@ func (ch *Channel) Error(format string, a ...any) {
 	log.Printf("ERROR [%s] %s", ch.Config.Username, msg)
 }
 
+// Sections of the list (ChannelInfo.Rank).
+const (
+	RankRecording = 0 // being recorded
+	RankOnAir     = 1 // broadcasting, not being recorded
+	RankRetrying  = 2 // off the air, not paused: the monitor keeps trying to record it
+	RankPaused    = 3 // off the air and paused
+)
+
+// RankOf is the section of the list a channel belongs to.
+func RankOf(online, onAir, paused bool) int {
+	switch {
+	case online:
+		return RankRecording
+	case onAir:
+		return RankOnAir
+	case !paused:
+		return RankRetrying
+	}
+	return RankPaused
+}
+
 // ExportInfo exports the channel information as a ChannelInfo struct.
 func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	var filename string
@@ -275,12 +296,8 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		site = "chaturbate"
 	}
 
-	rank := 2
-	if isOnline {
-		rank = 0
-	} else if available {
-		rank = 1
-	}
+	paused := ch.isPaused() // Pause/Resume write it under monitorMu
+	rank := RankOf(isOnline, available, paused)
 
 	return &entity.ChannelInfo{
 		ChannelID:        entity.ChannelID(ch.Config.Site, ch.Config.Username),
@@ -288,7 +305,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		IsAvailable:      available,
 		Rank:             rank,
 		SortKey:          strings.ToLower(ch.Config.Username) + " " + strings.ToLower(site),
-		IsPaused:         ch.isPaused(), // Pause/Resume write it under monitorMu
+		IsPaused:         paused,
 		Username:         ch.Config.Username,
 		MaxDuration:      internal.FormatDuration(float64(ch.Config.MaxDuration * 60)), // MaxDuration from config is in minutes
 		MaxFilesize:      internal.FormatFilesize(ch.Config.MaxFilesize * 1024 * 1024), // MaxFilesize from config is in MB

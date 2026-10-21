@@ -75,8 +75,17 @@ type presenceEngine struct {
 	lists      map[string]*listState
 	confirm    map[string]struct{} // ids of paused channels that the list stopped reporting: ask the site before believing it
 	probeBlock time.Duration
-	lastAnswer time.Time // last time anything (list or probe) answered
-	probing    bool      // some site is being served by the per-channel method
+	lastAnswer time.Time     // last time anything (list or probe) answered
+	probing    bool          // some site is being served by the per-channel method
+	kick       chan struct{} // wakes the loop up (a channel was added, settings were saved)
+}
+
+// kickPresence makes the engine look at the channels right away.
+func (m *Manager) kickPresence() {
+	select {
+	case m.presence.kick <- struct{}{}:
+	default: // already pending (or no loop is running)
+	}
 }
 
 func (e *presenceEngine) listFor(siteName string) *listState {
@@ -113,19 +122,23 @@ func (ls *listState) healthy(interval time.Duration) bool {
 func (m *Manager) ResetPresence() {
 	e := &m.presence
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	for _, ls := range e.lists {
 		ls.next = time.Time{}
 		ls.backoff = 0
 		ls.unconfigured = false
 	}
+	e.mu.Unlock()
+	m.kickPresence()
 }
 
 // presenceLoop runs for the life of the process.
 func (m *Manager) presenceLoop() {
 	req := internal.NewReq()
 	for {
-		time.Sleep(m.presenceStep(req))
+		select {
+		case <-time.After(m.presenceStep(req)):
+		case <-m.presence.kick:
+		}
 	}
 }
 

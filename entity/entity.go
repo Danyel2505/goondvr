@@ -92,7 +92,8 @@ type ChannelInfo struct {
 	IsOnline         bool // recording (connected to the stream)
 	IsAvailable      bool // broadcasting right now, whether or not it is being recorded
 	IsPaused         bool
-	Rank             int    // 0 recording, 1 broadcasting but not recording, 2 the rest; the list is ordered by it
+	Rank             int    // section of the list: 0 recording, 1 on air but not recording, 2 off air but still trying (not paused), 3 off air and paused
+	SectionStart     bool   // first card of its section in the list being rendered (the page puts the section header before it)
 	SortKey          string // lower-case "username site": the order inside a rank
 	Username         string
 	Duration         string
