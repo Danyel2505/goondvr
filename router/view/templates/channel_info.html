@@ -45,7 +45,7 @@
 {{ define "channel_details" }}
 {{ if eq .ViewMode "expanded" }}
 <!-- Expanded View -->
-<div class="view-expanded" data-rank="{{ .Rank }}">
+<div class="view-expanded" data-rank="{{ .Rank }}" data-q="{{ .Username }} {{ .RoomTitle }} {{ .Site }}{{ range .Tags }} {{ . }}{{ end }}" data-tags="|{{ range .Tags }}{{ . }}|{{ end }}">
     <!-- Header -->
     <div class="ts-grid is-middle-aligned has-top-spaced-small">
         <div class="column is-fluid">
@@ -72,6 +72,8 @@
         {{ if .Gender }}<span class="item">{{ if eq .Gender "f" }}♀ Female{{ else if eq .Gender "m" }}♂ Male{{ else if eq .Gender "t" }}⚧ Trans{{ else if eq .Gender "c" }}👫 Couple{{ else }}{{ .Gender }}{{ end }}</span>{{ end }}
     </div>
     {{ end }}
+
+    {{ if .Tags }}<div class="card-tags">{{ range $i, $t := .Tags }}{{ if lt $i 12 }}<button type="button" class="card-tag" data-tag="{{ $t }}">{{ $t }}</button>{{ end }}{{ end }}</div>{{ end }}
 
     <div class="ts-divider has-top-spaced"></div>
 

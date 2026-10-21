@@ -71,6 +71,39 @@
             .collapsed-stat { flex-shrink: 0; white-space: nowrap; }
             .collapsed-actions { flex-shrink: 0; display: flex; gap: 0.4rem; }
 
+            /* Page: the list in the middle, search and filters on the right */
+            #page { display: flex; justify-content: center; align-items: flex-start; gap: 1.25rem; padding: 0 0.5rem; }
+            #main-col { flex: 0 1 990px; min-width: 0; }
+            #side-panel { flex: 0 0 280px; width: 280px; position: sticky; top: var(--topbar-h, 96px); align-self: flex-start;
+                          max-height: calc(100vh - var(--topbar-h, 96px) - 12px); overflow-y: auto; scrollbar-width: thin; margin-top: 2.5rem; }
+            #filters-btn { display: none; }
+            @media (max-width: 1360px) {
+                #page { display: block; padding: 0; }
+                #filters-btn { display: inline-flex; }
+                /* a drawer hanging from the (sticky) top bar; the script moves the panel into the bar on narrow screens */
+                #side-panel { display: none; position: absolute; top: calc(100% + 6px); right: 0; width: min(320px, calc(100vw - 16px));
+                              max-height: 70vh; margin: 0; z-index: 60; box-shadow: 0 8px 28px rgba(0,0,0,0.45); }
+                #side-panel.is-open { display: block; }
+            }
+
+            /* Top bar: sticky, opaque (the colour of the page is copied by the script), never changes height while scrolling */
+            #top-bar { position: sticky; top: 0; z-index: 50; background: var(--page-bg, #1b1b1b); padding: 0.55rem 0 0.5rem; margin-top: 0.5rem;
+                       box-shadow: 0 1px 0 rgba(128,128,128,0.28); }
+            #top-bar .ts-switch { white-space: nowrap; }
+
+            /* Hide every picture (the script also stops downloading them) */
+            html.hide-images .img-switcher, html.hide-images .grid-img-switcher, html.hide-images .collapsed-img-switcher { display: none !important; }
+
+            /* Search / tag filter */
+            .channel-box.is-filtered { display: none !important; }
+            .tag-chip, .card-tag { display: inline-flex; align-items: center; gap: 0.3rem; margin: 0 0.3rem 0.3rem 0; padding: 0.1rem 0.5rem; border-radius: 999px;
+                                   border: 1px solid rgba(128,128,128,0.45); background: transparent; color: inherit; font: inherit; font-size: 0.78rem; line-height: 1.5; cursor: pointer; }
+            .tag-chip:hover, .card-tag:hover { background: rgba(128,128,128,0.18); }
+            .tag-chip.is-on, .card-tag.is-on { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+            .tag-chip .tag-n { opacity: 0.6; font-size: 0.72rem; }
+            .card-tags { margin-top: 0.4rem; }
+            .card-tag { font-size: 0.72rem; padding: 0 0.45rem; }
+
             /* Sections of the list (recording / on air / retrying / paused) */
             #channels-list > .section-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.15rem 0; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
             #channels-list > .section-head[hidden] { display: none; }
@@ -88,9 +121,11 @@
     </head>
 
     <body hx-ext="sse">
+        <div id="page">
+        <div id="main-col">
         <!-- Main Section -->
         <div class="ts-container has-vertically-padded-big" style="--width: 990px">
-            <!-- Header -->
+            <!-- Title -->
             <div class="ts-grid is-bottom-aligned">
                 <div class="column is-fluid">
                     <div class="ts-header is-huge is-uppercased is-heavy has-leading-small">GoondVR</div>
@@ -100,8 +135,12 @@
                         </div>
                     </div>
                 </div>
-                <div class="column">
-                    <!-- View Toggle -->
+            </div>
+            <!-- / Title -->
+
+            <!-- Top bar: always visible, also while scrolling -->
+            <div id="top-bar">
+                <div class="ts-wrap is-middle-aligned is-compact" style="gap: 0.5rem 0.75rem">
                     <div class="ts-button-group is-small">
                         <button id="view-btn-expanded" class="ts-button view-toggle-btn is-outlined" onclick="setView('expanded')" title="Expanded view">
                             <span class="ts-icon is-table-columns-icon"></span>
@@ -113,24 +152,25 @@
                             <span class="ts-icon is-bars-icon"></span>
                         </button>
                     </div>
-                </div>
-                <div class="column">
+                    <label class="ts-switch is-small" title="Hide the pictures of every channel (nothing is downloaded while they are hidden)">
+                        <input type="checkbox" id="hide-images-switch" />
+                        Hide images
+                    </label>
+                    <div style="flex: 1"></div>
+                    <button id="filters-btn" class="ts-button is-small is-start-icon is-outlined" type="button" title="Search and filter channels">
+                        <span class="ts-icon is-filter-icon"></span>
+                        Filters<span id="filters-badge" class="ts-badge is-small is-start-spaced" style="display:none"></span>
+                    </button>
                     <button class="ts-button is-start-icon is-outlined" data-dialog="settings-dialog">
                         <span class="ts-icon is-gear-icon"></span>
                         Settings
                     </button>
-                </div>
-                <div class="column">
                     <button class="ts-button is-start-icon" data-dialog="create-dialog">
                         <span class="ts-icon is-plus-icon"></span>
                         Add Channel
                     </button>
                 </div>
-            </div>
-            <!-- / Header -->
-
-            <!-- Stats Bar -->
-            <div id="stats-bar" class="ts-meta has-top-spaced" style="display:none; flex-wrap:wrap; gap: 0 1.2rem; align-items: center;">
+            <div id="stats-bar" class="ts-meta has-top-spaced-small" style="display:none; flex-wrap:wrap; gap: 0 1.2rem; align-items: center;">
                 <div class="item" id="stat-disk-item" style="display:none; align-items: center; gap: 0.3rem;">
                     <span class="ts-icon is-hard-drive-icon"></span>
                     <span id="stat-disk" class="ts-text is-description is-bold"></span>
@@ -147,8 +187,16 @@
                     <span id="stat-rec-dot" style="display:inline-block; width:7px; height:7px; border-radius:50%; background:rgba(255,255,255,0.35); margin-right:0.35rem; vertical-align:middle;"></span>
                     <span id="stat-recording" class="ts-text is-description is-bold"></span>
                 </div>
+                <div class="item" id="stat-presence-item" style="display:none; align-items: center; gap: 0.3rem;" title="How the app knows which channels are on the air (works with this page closed)">
+                    <span class="ts-icon is-tower-broadcast-icon"></span>
+                    <span id="stat-presence" class="ts-text is-description is-bold"></span>
+                </div>
             </div>
-            <!-- / Stats Bar -->
+            
+            </div>
+            <!-- / Top bar -->
+
+
 
             {{ if not .Channels }}
             <!-- Blankslate -->
@@ -207,6 +255,44 @@
             {{ end }}
         </div>
         <!-- / Main Section -->
+        </div>
+        <!-- Search and filters (right side; a drawer on narrow screens) -->
+        <aside id="side-panel" aria-label="Search and filters">
+            <div class="ts-content is-padded is-secondary" style="border-radius: 6px">
+                <div class="ts-input is-start-icon is-fluid">
+                    <span class="ts-icon is-magnifying-glass-icon"></span>
+                    <input id="search-input" type="search" placeholder="Search channels or tags…" autocomplete="off" spellcheck="false" />
+                </div>
+                <div id="search-summary" class="ts-text is-description is-small has-top-spaced-small"></div>
+                <label class="ts-checkbox is-small has-top-spaced-small">
+                    <input type="checkbox" id="only-air" />
+                    On air or recording only
+                </label>
+
+                <div class="ts-divider has-vertically-spaced"></div>
+
+                <div class="ts-grid is-middle-aligned">
+                    <div class="column is-fluid"><span class="ts-text is-bold is-small is-uppercased">Tags</span></div>
+                    <div class="column">
+                        <div class="ts-button-group is-small is-segmented" id="tag-mode" title="A channel must have all of the selected tags, or any of them">
+                            <button type="button" class="ts-button is-small is-start-icon is-active" data-mode="all">All</button>
+                            <button type="button" class="ts-button is-small is-outlined" data-mode="any">Any</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="ts-input is-small has-top-spaced-small">
+                    <input id="tag-search" type="search" placeholder="Filter tags…" autocomplete="off" spellcheck="false" />
+                </div>
+                <div id="tag-list" class="has-top-spaced-small"></div>
+                <div id="tag-empty" class="ts-text is-description is-small has-top-spaced-small" style="display:none">No tags yet: they appear once a channel has been seen on the air.</div>
+
+                <div class="ts-divider has-vertically-spaced"></div>
+                <button id="filters-clear" type="button" class="ts-button is-small is-outlined is-fluid">Clear search and filters</button>
+            </div>
+        </aside>
+        </div>
+        <!-- / Page -->
+
 
         <!-- Settings Dialog -->
         <dialog id="settings-dialog" class="ts-modal" style="--width: 680px">
@@ -899,7 +985,11 @@
                 for (const s of visibleSwitchers) if (s.dataset.channelId === channelID && s.isConnected) return true;
                 return false;
             }
+            // "Hide images": nothing is downloaded while it is on (the pictures themselves are hidden by CSS).
+            let imagesHidden = readStored('dvr-hide-images') === '1';
+            if (imagesHidden) document.documentElement.classList.add('hide-images');
             function pumpThumbQueue() {
+                if (imagesHidden) { while (thumbQueue.length) thumbQueue.pop().reject(THUMB_STALE); return; }
                 while (thumbActive < THUMB_PARALLEL && thumbQueue.length) {
                     const job = thumbQueue.pop();
                     if (!thumbStillWanted(job.channelID)) { job.reject(THUMB_STALE); continue; }
@@ -976,6 +1066,7 @@
 
             // Starts downloading a newer picture for the card if one is due.
             function ensureThumb(switcher, now) {
+                if (imagesHidden) return;
                 const channelID = switcher.dataset.channelId;
                 const st = thumbInfo(channelID);
                 if (effectiveThumbMode(switcher) === 'live') {
@@ -1352,7 +1443,7 @@
             function deliverCard(elt, data) {
                 const id = elt.getAttribute('sse-swap') || '';
                 elt._updatedAt = Date.now(); // lets watchPendingButton know that the server reported this card
-                if (id.endsWith('-info')) noteRank(elt, data); // the card may have to change place, seen or not
+                if (id.endsWith('-info')) { noteRank(elt, data); noteMeta(elt, data); } // the card may have to change place or filter, seen or not
                 if (id.endsWith('-log')) {
                     const box = elt.closest('.ts-box');
                     const autoUpdate = box && box.querySelector('[type=checkbox]');
@@ -1412,6 +1503,7 @@
                 const box = elt.closest('.ts-box');
                 if (!box || box.dataset.rank === m[1]) return;
                 box.dataset.rank = m[1];
+                if (typeof filterState !== 'undefined' && filterState.onlyAir) scheduleMetaRefresh();
                 scheduleReorder(REORDER_DELAY_MS);
             }
 
@@ -1745,10 +1837,252 @@
                         ? `${count} RECORDING`
                         : 'NO RECORDING';
                     dot.style.background = count > 0 ? '#4caf50' : 'rgba(255,255,255,0.35)';
+
+                    // How the channels on the air are detected (works with this page closed)
+                    const pr = data.presence || {};
+                    let text = '', detail = '';
+                    if (pr.method === 'list') { text = 'On-air list'; detail = 'Main method: the list of rooms on the air. Last answer ' + pr.age_sec + ' s ago.'; }
+                    else if (pr.method === 'probe') {
+                        text = 'Per-channel check';
+                        detail = 'Backup method: each paused channel is asked about, a few at a time.' +
+                                 (pr.detail === 'no-list-config' ? ' Add your Chaturbate affiliate ID in Settings to use the faster list.' :
+                                  pr.detail === 'list-failing' ? ' The list failed, it will be retried.' : '');
+                    }
+                    const pItem = document.getElementById('stat-presence-item');
+                    if (pItem) {
+                        pItem.style.display = text ? 'flex' : 'none';
+                        document.getElementById('stat-presence').textContent = text;
+                        pItem.title = detail;
+                    }
+                    const pSet = document.getElementById('presence-status');
+                    if (pSet) pSet.textContent = detail ? 'Now: ' + detail : '';
                 }).catch(() => {});
             }
             fetchStats();
             setInterval(fetchStats, 30000);
+
+            // ---- Top bar, hide images, search and tags ----------------------------
+            // The bar copies the colour of the page so that what scrolls behind it is covered.
+            const rootEl = document.documentElement;
+            (function () {
+                function pageColor() {
+                    const list = [document.body, rootEl];
+                    for (let i = 0; i < list.length; i++) {
+                        const c = getComputedStyle(list[i]).backgroundColor;
+                        if (c && c !== 'transparent' && !/,\s*0\)$/.test(c)) return c;
+                    }
+                    return '#1b1b1b';
+                }
+                rootEl.style.setProperty('--page-bg', pageColor());
+                const bar = document.getElementById('top-bar');
+                function measureBar() { if (bar) rootEl.style.setProperty('--topbar-h', (Math.ceil(bar.getBoundingClientRect().height) + 10) + 'px'); }
+                measureBar();
+                if (bar && window.ResizeObserver) new ResizeObserver(measureBar).observe(bar);
+            })();
+
+            const hideImagesSwitch = document.getElementById('hide-images-switch');
+            if (hideImagesSwitch) {
+                hideImagesSwitch.checked = imagesHidden;
+                hideImagesSwitch.addEventListener('change', function () {
+                    imagesHidden = hideImagesSwitch.checked;
+                    rootEl.classList.toggle('hide-images', imagesHidden);
+                    writeStored('dvr-hide-images', imagesHidden ? '1' : '0');
+                    if (imagesHidden) { while (thumbQueue.length) thumbQueue.pop().reject(THUMB_STALE); }
+                    else requestAnimationFrame(tickThumbs); // pictures come back right away
+                });
+            }
+
+            // Search and tag filter. Every card carries what can be searched (data-q: name,
+            // title, gender, tags) and its tags (data-tags, |a|b|), repeated in each card
+            // update. Filtering only toggles a class on the cards, nothing is redrawn, and a
+            // card that is filtered out is not loaded (it is not on screen).
+            const filterState = { tokens: [], tags: new Set(), tagMode: 'all', onlyAir: false, tagQuery: '' };
+            const searchInput = document.getElementById('search-input');
+            const tagSearchInput = document.getElementById('tag-search');
+            const decodeBox = document.createElement('textarea');
+            function decodeHtml(s) { decodeBox.innerHTML = s; return decodeBox.value; }
+            function normText(s) { return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+            const Q_RE = /data-q="([^"]*)"/, TAGS_RE = /data-tags="([^"]*)"/;
+
+            function allBoxes() {
+                return channelsList ? Array.from(channelsList.children).filter(function (el) { return el.dataset.sort !== undefined; }) : [];
+            }
+            function readBoxMeta(box, qRaw, tagsRaw) {
+                let changed = false;
+                if (qRaw !== undefined && qRaw !== box._qRaw) { box._qRaw = qRaw; box._q = normText(decodeHtml(qRaw)); changed = true; }
+                if (tagsRaw !== undefined && tagsRaw !== box._tagsRaw) {
+                    box._tagsRaw = tagsRaw;
+                    box._tags = decodeHtml(tagsRaw).split('|').filter(Boolean);
+                    changed = true;
+                }
+                return changed;
+            }
+            allBoxes().forEach(function (box) {
+                const d = box.querySelector('[data-q]');
+                if (d) readBoxMeta(box, d.getAttribute('data-q') === null ? undefined : escapeAttr(d.getAttribute('data-q')), escapeAttr(d.getAttribute('data-tags') || ''));
+            });
+            // (the raw text of a card update is what the server wrote inside the attribute; for the
+            // cards of the first page the same text is rebuilt from the decoded attribute value)
+            function escapeAttr(v) { return v.replace(/&/g, '&amp;').replace(/"/g, '&#34;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+            function boxMatches(box) {
+                if (filterState.onlyAir && Number(box.dataset.rank) > 1) return false;
+                if (filterState.tokens.length) {
+                    const q = box._q || '';
+                    for (let i = 0; i < filterState.tokens.length; i++) if (q.indexOf(filterState.tokens[i]) < 0) return false;
+                }
+                if (filterState.tags.size) {
+                    const tg = box._tags || [];
+                    if (filterState.tagMode === 'all') {
+                        for (const t of filterState.tags) if (tg.indexOf(t) < 0) return false;
+                    } else {
+                        let any = false;
+                        for (const t of filterState.tags) if (tg.indexOf(t) >= 0) { any = true; break; }
+                        if (!any) return false;
+                    }
+                }
+                return true;
+            }
+            function filterActive() { return filterState.tokens.length > 0 || filterState.tags.size > 0 || filterState.onlyAir; }
+            function applyFilterTo(box) {
+                const hide = !boxMatches(box);
+                if (hide === box.classList.contains('is-filtered')) return false;
+                box.classList.toggle('is-filtered', hide);
+                return true;
+            }
+
+            const searchSummary = document.getElementById('search-summary');
+            const filtersBadge = document.getElementById('filters-badge');
+            function refilterAll() {
+                const boxes = allBoxes();
+                let shown = 0;
+                boxes.forEach(function (b) { applyFilterTo(b); if (!b.classList.contains('is-filtered')) shown++; });
+                syncSections();
+                if (searchSummary) {
+                    searchSummary.textContent = boxes.length === 0 ? '' : (filterActive()
+                        ? shown + ' of ' + boxes.length + ' channels' + (shown === 0 ? ' — nothing matches' : '')
+                        : boxes.length + ' channels');
+                }
+                if (filtersBadge) {
+                    const n = filterState.tokens.length + filterState.tags.size + (filterState.onlyAir ? 1 : 0);
+                    filtersBadge.textContent = String(n);
+                    filtersBadge.style.display = n ? '' : 'none';
+                }
+                renderTagCloud();
+            }
+
+            // A card update brought new text/tags/rank for one card.
+            let metaTimer = 0;
+            function noteMeta(elt, data) {
+                const box = elt.closest('.ts-box');
+                if (!box) return;
+                const q = Q_RE.exec(data), t = TAGS_RE.exec(data);
+                if (!readBoxMeta(box, q ? q[1] : undefined, t ? t[1] : undefined)) return;
+                if (applyFilterTo(box) || filterActive()) scheduleMetaRefresh();
+                else scheduleTagCloud();
+            }
+            function scheduleMetaRefresh() {
+                if (metaTimer) return;
+                metaTimer = setTimeout(function () { metaTimer = 0; refilterAll(); }, 200);
+            }
+            let cloudTimer = 0;
+            function scheduleTagCloud() {
+                if (cloudTimer) return;
+                cloudTimer = setTimeout(function () { cloudTimer = 0; renderTagCloud(); }, 600);
+            }
+
+            // The tag cloud: every tag seen on any channel with how many channels have it.
+            const tagListEl = document.getElementById('tag-list');
+            const tagEmptyEl = document.getElementById('tag-empty');
+            const TAG_SHOWN_MAX = 80;
+            function escHtml(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+            function renderTagCloud() {
+                if (!tagListEl) return;
+                const counts = new Map();
+                allBoxes().forEach(function (b) { (b._tags || []).forEach(function (t) { counts.set(t, (counts.get(t) || 0) + 1); }); });
+                filterState.tags.forEach(function (t) { if (!counts.has(t)) counts.set(t, 0); }); // a selected tag stays so that it can be unselected
+                const q = normText(filterState.tagQuery.trim());
+                const entries = Array.from(counts.entries()).filter(function (e) { return filterState.tags.has(e[0]) || !q || e[0].indexOf(q) >= 0; });
+                entries.sort(function (a, b) {
+                    const sa = filterState.tags.has(a[0]) ? 0 : 1, sb = filterState.tags.has(b[0]) ? 0 : 1;
+                    return sa - sb || b[1] - a[1] || (a[0] < b[0] ? -1 : 1);
+                });
+                const shown = entries.slice(0, TAG_SHOWN_MAX);
+                let html = '';
+                shown.forEach(function (e) {
+                    html += '<button type="button" class="tag-chip' + (filterState.tags.has(e[0]) ? ' is-on' : '') + '" data-tag="' + escHtml(e[0]) + '">' +
+                            escHtml(e[0]) + ' <span class="tag-n">' + e[1] + '</span></button>';
+                });
+                if (entries.length > shown.length) html += '<div class="ts-text is-description is-small">+' + (entries.length - shown.length) + ' more: type in the box above to narrow them down</div>';
+                if (tagListEl._html !== html) { tagListEl._html = html; tagListEl.innerHTML = html; }
+                if (tagEmptyEl) tagEmptyEl.style.display = counts.size === 0 ? '' : 'none';
+                // the tags on the cards show which ones are selected
+                if (channelsList) channelsList.querySelectorAll('.card-tag').forEach(function (c) { c.classList.toggle('is-on', filterState.tags.has(c.dataset.tag)); });
+            }
+            function toggleTag(tag) {
+                if (filterState.tags.has(tag)) filterState.tags.delete(tag); else filterState.tags.add(tag);
+                refilterAll();
+            }
+            if (tagListEl) tagListEl.addEventListener('click', function (e) {
+                const b = e.target.closest('.tag-chip');
+                if (b) toggleTag(b.dataset.tag);
+            });
+            if (channelsList) channelsList.addEventListener('click', function (e) {
+                const b = e.target.closest('.card-tag');
+                if (b) toggleTag(b.dataset.tag);
+            });
+
+            let searchTimer = 0;
+            if (searchInput) searchInput.addEventListener('input', function () {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(function () {
+                    filterState.tokens = normText(searchInput.value).split(/\s+/).filter(Boolean);
+                    refilterAll();
+                }, 120);
+            });
+            if (tagSearchInput) tagSearchInput.addEventListener('input', function () { filterState.tagQuery = tagSearchInput.value; renderTagCloud(); });
+            const onlyAirBox = document.getElementById('only-air');
+            if (onlyAirBox) onlyAirBox.addEventListener('change', function () { filterState.onlyAir = onlyAirBox.checked; refilterAll(); });
+            document.querySelectorAll('#tag-mode button').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    filterState.tagMode = btn.dataset.mode;
+                    document.querySelectorAll('#tag-mode button').forEach(function (b) {
+                        const on = b === btn;
+                        b.classList.toggle('is-active', on);
+                        b.classList.toggle('is-outlined', !on);
+                    });
+                    if (filterState.tags.size > 1) refilterAll();
+                });
+            });
+            const clearBtn = document.getElementById('filters-clear');
+            if (clearBtn) clearBtn.addEventListener('click', function () {
+                filterState.tokens = []; filterState.tags.clear(); filterState.onlyAir = false; filterState.tagQuery = '';
+                if (searchInput) searchInput.value = '';
+                if (tagSearchInput) tagSearchInput.value = '';
+                if (onlyAirBox) onlyAirBox.checked = false;
+                refilterAll();
+            });
+            // On narrow screens the panel is a drawer opened from the top bar.
+            const sidePanel = document.getElementById('side-panel');
+            const filtersBtn = document.getElementById('filters-btn');
+            // Narrow window: the panel hangs from the top bar; wide window: it sits on the right of the list.
+            const narrowMq = window.matchMedia ? window.matchMedia('(max-width: 1360px)') : null;
+            function placePanel() {
+                const bar = document.getElementById('top-bar'), page = document.getElementById('page');
+                if (!sidePanel || !bar || !page) return;
+                const target = narrowMq && narrowMq.matches ? bar : page;
+                if (sidePanel.parentNode !== target) target.appendChild(sidePanel);
+                if (!(narrowMq && narrowMq.matches)) sidePanel.classList.remove('is-open');
+            }
+            placePanel();
+            if (narrowMq && narrowMq.addEventListener) narrowMq.addEventListener('change', placePanel);
+            if (filtersBtn && sidePanel) {
+                filtersBtn.addEventListener('click', function (e) { e.stopPropagation(); sidePanel.classList.toggle('is-open'); });
+                document.addEventListener('click', function (e) {
+                    if (sidePanel.classList.contains('is-open') && !sidePanel.contains(e.target) && !filtersBtn.contains(e.target)) sidePanel.classList.remove('is-open');
+                });
+            }
+            refilterAll();
         </script>
     </body>
 </html>
