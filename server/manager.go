@@ -44,4 +44,13 @@ type StatsResponse struct {
 	DiskPercent    float64 `json:"disk_percent"`
 	UptimeSeconds  int64   `json:"uptime_seconds"`
 	RecordingCount int     `json:"recording_count"`
+	// Presence says how the "on air" marks of the channels are being kept up to date.
+	Presence PresenceStatus `json:"presence"`
+}
+
+// PresenceStatus is the state of the detection of the channels that are on the air.
+type PresenceStatus struct {
+	Method string `json:"method"`           // "list" (main), "probe" (per-channel fallback) or "" (nothing to watch)
+	AgeSec int    `json:"age_sec"`          // seconds since the last answer, -1 = none yet
+	Detail string `json:"detail,omitempty"` // "no-list-config": the list needs an affiliate id; "list-failing": the list failed and the fallback is in use
 }

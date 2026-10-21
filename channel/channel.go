@@ -253,6 +253,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	isOnline, roomTitle, gender, numViewers := ch.IsOnline, ch.RoomTitle, ch.Gender, ch.NumViewers
 	available := ch.Available || ch.IsOnline
 	edgeRegion, summaryCard, liveThumb := ch.EdgeRegion, ch.SummaryCardImage, ch.LiveThumbURL
+	tags := ch.Config.Tags // replaced as a whole under stateMu, never edited in place
 	streamedAtUnix := ch.StreamedAt
 	ch.stateMu.RUnlock()
 	var streamedAt string
@@ -305,6 +306,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		EdgeRegion:       edgeRegion,
 		SummaryCardImage: summaryCard,
 		LiveThumbURL:     liveThumb,
+		Tags:             tags,
 		Site:             site,
 		SiteDomain:       siteDomain,
 	}
@@ -340,6 +342,11 @@ func (ch *Channel) Stop() {
 	ch.Info("channel stopped")
 	ch.stopPublisher()
 }
+
+// WaitPublisherExit blocks until the goroutine that pushes the channel to the
+// web UI has returned (after Stop). Tests use it before restoring the globals
+// that goroutine reads.
+func (ch *Channel) WaitPublisherExit() { <-ch.publisherExited }
 
 // Resume resumes the channel monitoring.
 //

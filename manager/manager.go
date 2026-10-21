@@ -26,6 +26,8 @@ type Manager struct {
 	Channels sync.Map
 	hub      *hub // Server-Sent Events to the web UI (see hub.go)
 
+	presence presenceEngine // keeps the "on air" mark of the channels up to date (presence.go)
+
 	startTime  time.Time
 	cfBlocksMu sync.Mutex
 	cfBlocks   map[string]time.Time // username -> last CF block time
@@ -49,7 +51,7 @@ func New() (*Manager, error) {
 	m.startTime = time.Now()
 	m.cfBlocks = make(map[string]time.Time)
 	go m.diskMonitor()
-	go m.availabilityLoop()
+	go m.presenceLoop()
 
 	// Keep-alive for the SSE connections. It is an SSE *comment*: browsers ignore
 	// it, but dead connections are noticed and proxies keep the stream open. (It
@@ -769,6 +771,7 @@ func (m *Manager) GetStats() server.StatsResponse {
 		DiskPercent:    disk.Percent,
 		UptimeSeconds:  int64(time.Since(m.startTime).Seconds()),
 		RecordingCount: count,
+		Presence:       m.PresenceStatus(),
 	}
 }
 

@@ -27,6 +27,9 @@ func resolveSite(siteName string) site.Site {
 	}
 }
 
+// ResolveSite returns the site.Site implementation for the given site name.
+func ResolveSite(siteName string) site.Site { return resolveSite(siteName) }
+
 // Monitor starts monitoring the channel for live streams and records them.
 func (ch *Channel) Monitor(runID uint64) {
 	defer ch.finishMonitor()

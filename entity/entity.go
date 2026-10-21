@@ -31,6 +31,8 @@ type ChannelConfig struct {
 	Gender           string `json:"gender,omitempty"`
 	SummaryCardImage string `json:"summary_card_image,omitempty"`
 	StreamedAt       int64  `json:"streamed_at,omitempty"`
+	// Tags the site gives the room (lower case); filled in from the list of rooms on the air.
+	Tags []string `json:"tags,omitempty"`
 }
 
 func (c *ChannelConfig) Sanitize() {
@@ -103,6 +105,7 @@ type ChannelInfo struct {
 	EdgeRegion       string
 	SummaryCardImage string
 	LiveThumbURL     string // live-updating thumbnail; empty = use platform default
+	Tags             []string
 	Site             string // "chaturbate" (default) or "stripchat"
 	SiteDomain       string // pre-computed site URL, e.g. "https://chaturbate.com/" or "https://stripchat.com/"
 }
