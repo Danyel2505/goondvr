@@ -31,6 +31,9 @@ type IManager interface {
 	ReportCFBlock(username string)
 	ResetCFBlock(username string)
 	GetStats() StatsResponse
+	// ResetPresence makes the detection of the channels on the air try its main method
+	// again right away (the settings that control it were saved).
+	ResetPresence()
 	// HasViewers reports whether any browser has the web UI open, so that work
 	// done only for the sake of the UI (renewing previews) can be skipped.
 	HasViewers() bool

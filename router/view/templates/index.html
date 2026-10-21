@@ -316,6 +316,111 @@
                         </div>
                         <!-- / Browser Fetch -->
 
+                        <!-- Detection of the channels on the air -->
+                        <div class="ts-control is-wide has-top-spaced-large">
+                            <div class="label">On-air detection</div>
+                            <div class="content">
+                                <div class="ts-content is-padded is-secondary">
+                                    <div class="ts-grid is-relaxed is-2-columns">
+                                        <div class="column">
+                                            <div class="ts-text is-bold">Chaturbate affiliate ID</div>
+                                            <div class="ts-input has-top-spaced-small">
+                                                <input type="text" name="presence_campaign" value="{{ .Config.PresenceCampaign }}" placeholder="your campaign / wm id" />
+                                            </div>
+                                        </div>
+                                        <div class="column">
+                                            <div class="ts-text is-bold">Check every</div>
+                                            <div class="ts-input is-end-labeled has-top-spaced-small">
+                                                <input type="number" name="presence_interval" value="{{ if .Config.PresenceInterval }}{{ .Config.PresenceInterval }}{{ end }}" placeholder="60" min="20" max="3600" />
+                                                <span class="label">sec</span>
+                                            </div>
+                                        </div>
+                                        <div class="column" style="grid-column: 1 / -1">
+                                            <div class="ts-text is-bold">Custom list address (advanced)</div>
+                                            <div class="ts-input has-top-spaced-small">
+                                                <input type="text" name="presence_list_url" value="{{ .Config.PresenceListURL }}" placeholder="https://… (a siren users_online_endpoint)" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="ts-text is-description has-top-spaced">The app always knows which channels are on the air, even with this page closed. Main method: one request to the list of rooms on the air (like <a class="ts-text is-link" href="https://github.com/bcmk/siren" target="_blank">siren</a>), which needs your free Chaturbate affiliate ID. Without it, or if it fails, a backup method asks about each paused channel, a few at a time.</div>
+                                    <div id="presence-status" class="ts-text is-description has-top-spaced-small"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- / Detection of the channels on the air -->
+
+                        <!-- Defaults of new channels -->
+                        <div class="ts-control is-wide has-top-spaced-large">
+                            <div class="label">New channel defaults</div>
+                            <div class="content">
+                                <div class="ts-content is-padded is-secondary">
+                                    <div class="ts-grid is-relaxed is-2-columns">
+                                        <div class="column">
+                                            <div class="ts-text is-bold">Resolution</div>
+                                            <div class="ts-select has-top-spaced-small">
+                                                <select name="default_resolution">
+                                                    <option value="2160" {{ if eq .Config.Resolution 2160 }}selected{{ end }}>4K</option>
+                                                    <option value="1440" {{ if eq .Config.Resolution 1440 }}selected{{ end }}>2K</option>
+                                                    <option value="1080" {{ if eq .Config.Resolution 1080 }}selected{{ end }}>1080p</option>
+                                                    <option value="720" {{ if eq .Config.Resolution 720 }}selected{{ end }}>720p</option>
+                                                    <option value="540" {{ if eq .Config.Resolution 540 }}selected{{ end }}>540p</option>
+                                                    <option value="480" {{ if eq .Config.Resolution 480 }}selected{{ end }}>480p</option>
+                                                    <option value="240" {{ if eq .Config.Resolution 240 }}selected{{ end }}>240p</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="column">
+                                            <div class="ts-text is-bold">Framerate</div>
+                                            <div class="ts-select has-top-spaced-small">
+                                                <select name="default_framerate">
+                                                    <option value="60" {{ if eq .Config.Framerate 60 }}selected{{ end }}>60 FPS (or lower)</option>
+                                                    <option value="30" {{ if eq .Config.Framerate 30 }}selected{{ end }}>30 FPS</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="column" style="grid-column: 1 / -1">
+                                            <div class="ts-text is-bold">Filename pattern</div>
+                                            <div class="ts-input has-top-spaced-small">
+                                                <input type="text" name="default_pattern" value="{{ .Config.Pattern }}" />
+                                            </div>
+                                        </div>
+                                        <div class="column">
+                                            <div class="ts-text is-bold">Max filesize</div>
+                                            <div class="ts-input is-end-labeled has-top-spaced-small">
+                                                <input type="number" name="default_max_filesize" value="{{ .Config.MaxFilesize }}" min="0" />
+                                                <span class="label">MB</span>
+                                            </div>
+                                        </div>
+                                        <div class="column">
+                                            <div class="ts-text is-bold">Max duration</div>
+                                            <div class="ts-input is-end-labeled has-top-spaced-small">
+                                                <input type="number" name="default_max_duration" value="{{ .Config.MaxDuration }}" min="0" />
+                                                <span class="label">Min(s)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="ts-text is-description has-top-spaced">Every channel you add from now on starts with these values (the Add Channel form is filled in with them). Each channel can change them afterwards with the gear button on its card.</div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- / Defaults of new channels -->
+
+                        <!-- Automatic recording -->
+                        <div class="ts-control is-wide has-top-spaced-large">
+                            <div class="label">Automatic recording</div>
+                            <div class="content">
+                                <div class="ts-content is-padded is-secondary">
+                                    <div class="ts-text is-bold">Keep at least this much free disk space</div>
+                                    <div class="ts-input is-end-labeled has-top-spaced-small" style="max-width: 16rem">
+                                        <input type="number" name="auto_min_free_gb" value="{{ .Config.AutoMinFreeGB }}" min="1" />
+                                        <span class="label">GB</span>
+                                    </div>
+                                    <div class="ts-text is-description has-top-spaced">Channels with "record automatically" turned on (button on each card; off by default) start recording by themselves when they go on the air. With the disk check enabled for a channel, it does not start while the recording disk has less free space than this.</div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- / Automatic recording -->
+
                         <!-- Completed Directory -->
                         <div class="ts-control is-wide has-top-spaced-large">
                             <div class="label">Completed Directory</div>

@@ -103,6 +103,20 @@ type settings struct {
 	NotifyCooldownHours int    `json:"notify_cooldown_hours,omitempty"`
 	NotifyStreamOnline  bool   `json:"notify_stream_online,omitempty"`
 	StripchatPDKey      string `json:"stripchat_pdkey,omitempty"`
+
+	// Detection of the channels on the air (see presence.go).
+	PresenceCampaign string `json:"presence_campaign,omitempty"`
+	PresenceListURL  string `json:"presence_list_url,omitempty"`
+	PresenceInterval int    `json:"presence_interval,omitempty"`
+	// Global threshold of the "record automatically" option of the channels.
+	AutoMinFreeGB int `json:"auto_min_free_gb,omitempty"`
+	// Defaults for the channels that are added from now on (nil = not saved: the
+	// command-line / built-in value is used). A channel can change them afterwards.
+	DefaultFramerate   *int    `json:"default_framerate,omitempty"`
+	DefaultResolution  *int    `json:"default_resolution,omitempty"`
+	DefaultPattern     *string `json:"default_pattern,omitempty"`
+	DefaultMaxDuration *int    `json:"default_max_duration,omitempty"`
+	DefaultMaxFilesize *int    `json:"default_max_filesize,omitempty"`
 }
 
 func ensureConfDir() error {
@@ -174,7 +188,15 @@ func SaveSettings() error {
 		NotifyCooldownHours: server.Config.NotifyCooldownHours,
 		NotifyStreamOnline:  server.Config.NotifyStreamOnline,
 		StripchatPDKey:      server.Config.StripchatPDKey,
+		PresenceCampaign:    server.Config.PresenceCampaign,
+		PresenceListURL:     server.Config.PresenceListURL,
+		PresenceInterval:    server.Config.PresenceInterval,
+		AutoMinFreeGB:       server.Config.AutoMinFreeGB,
 	}
+	// The defaults of new channels are saved once the person has chosen them in
+	// Settings (that is the only place that calls SaveSettings).
+	fr, res, pat, md, mf := server.Config.Framerate, server.Config.Resolution, server.Config.Pattern, server.Config.MaxDuration, server.Config.MaxFilesize
+	s.DefaultFramerate, s.DefaultResolution, s.DefaultPattern, s.DefaultMaxDuration, s.DefaultMaxFilesize = &fr, &res, &pat, &md, &mf
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
@@ -265,6 +287,28 @@ func LoadSettings() error {
 	if s.StripchatPDKey != "" {
 		server.Config.StripchatPDKey = s.StripchatPDKey
 	}
+	server.Config.PresenceCampaign = strings.TrimSpace(s.PresenceCampaign)
+	server.Config.PresenceListURL = strings.TrimSpace(s.PresenceListURL)
+	server.Config.PresenceInterval = s.PresenceInterval
+	server.Config.AutoMinFreeGB = s.AutoMinFreeGB
+	if server.Config.AutoMinFreeGB <= 0 {
+		server.Config.AutoMinFreeGB = DefaultAutoMinFreeGB
+	}
+	if s.DefaultFramerate != nil && (*s.DefaultFramerate == 30 || *s.DefaultFramerate == 60) {
+		server.Config.Framerate = *s.DefaultFramerate
+	}
+	if s.DefaultResolution != nil && *s.DefaultResolution > 0 {
+		server.Config.Resolution = *s.DefaultResolution
+	}
+	if s.DefaultPattern != nil && strings.TrimSpace(*s.DefaultPattern) != "" {
+		server.Config.Pattern = *s.DefaultPattern
+	}
+	if s.DefaultMaxDuration != nil && *s.DefaultMaxDuration >= 0 {
+		server.Config.MaxDuration = *s.DefaultMaxDuration
+	}
+	if s.DefaultMaxFilesize != nil && *s.DefaultMaxFilesize >= 0 {
+		server.Config.MaxFilesize = *s.DefaultMaxFilesize
+	}
 	if server.Config.FFmpegEncoder == "" {
 		server.Config.FFmpegEncoder = "libx264"
 	}
@@ -291,6 +335,15 @@ func LoadSettings() error {
 		server.Config.BrowserBootstrapURL = server.Config.Domain
 	}
 	return nil
+}
+
+// DefaultAutoMinFreeGB is the free disk space below which "record automatically" waits.
+const DefaultAutoMinFreeGB = 10
+
+// ValidatePattern reports whether a filename pattern can be used.
+func ValidatePattern(pattern string) error {
+	_, err := renderPatternSample(&entity.ChannelConfig{Username: "user", Site: "chaturbate", Pattern: pattern})
+	return err
 }
 
 func renderPatternSample(conf *entity.ChannelConfig) (string, error) {

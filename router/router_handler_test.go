@@ -3,8 +3,11 @@ package router
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
+	"github.com/HeapOfChaos/goondvr/entity"
 	"github.com/HeapOfChaos/goondvr/server"
 	"github.com/gin-gonic/gin"
 )
@@ -12,7 +15,10 @@ import (
 type fakeManager struct {
 	server.IManager
 	paused, resumed []string
+	resets          int
 }
+
+func (f *fakeManager) ResetPresence() { f.resets++ }
 
 func (f *fakeManager) PauseChannel(id string) error  { f.paused = append(f.paused, id); return nil }
 func (f *fakeManager) ResumeChannel(id string) error { f.resumed = append(f.resumed, id); return nil }
@@ -71,5 +77,53 @@ func TestPauseResumeFromPlainPostStillRedirect(t *testing.T) {
 		if w.Code != http.StatusFound || w.Header().Get("Location") != "/" {
 			t.Fatalf("%s: status %d Location %q, want 302 to /", path, w.Code, w.Header().Get("Location"))
 		}
+	}
+}
+
+func postForm(r *gin.Engine, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestUpdateConfigSavesPresenceAndNewChannelDefaults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Chdir(t.TempDir())
+	oldCfg, oldMgr := server.Config, server.Manager
+	server.Config = &entity.Config{Framerate: 60, Resolution: 1080, Pattern: "videos/{{.Username}}", MaxDuration: 0, MaxFilesize: 0, AutoMinFreeGB: 10}
+	fm := &fakeManager{}
+	server.Manager = fm
+	t.Cleanup(func() { server.Config, server.Manager = oldCfg, oldMgr })
+	r := gin.New()
+	r.POST("/update_config", UpdateConfig)
+
+	w := postForm(r, "/update_config", "presence_campaign=+camp9+&presence_interval=90&auto_min_free_gb=25"+
+		"&default_framerate=30&default_resolution=720&default_pattern=videos%2F%7B%7B.Username%7D%7D_x&default_max_duration=60&default_max_filesize=2048")
+	if w.Code != http.StatusFound {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	c := server.Config
+	if c.PresenceCampaign != "camp9" || c.PresenceInterval != 90 || c.AutoMinFreeGB != 25 ||
+		c.Framerate != 30 || c.Resolution != 720 || c.Pattern != "videos/{{.Username}}_x" || c.MaxDuration != 60 || c.MaxFilesize != 2048 {
+		t.Fatalf("settings not applied: %+v", c)
+	}
+	if fm.resets != 1 {
+		t.Fatal("the presence engine must be told to retry its list")
+	}
+	saved, err := os.ReadFile("conf/settings.json")
+	if err != nil || !strings.Contains(string(saved), `"presence_campaign": "camp9"`) || !strings.Contains(string(saved), `"default_resolution": 720`) {
+		t.Fatalf("settings.json: %v\n%s", err, saved)
+	}
+
+	// A form that does not carry a field leaves its value alone; a bad pattern is refused.
+	w = postForm(r, "/update_config", "presence_campaign=camp9")
+	if w.Code != http.StatusFound || server.Config.MaxFilesize != 2048 || server.Config.AutoMinFreeGB != 25 || server.Config.Resolution != 720 {
+		t.Fatalf("absent fields must stay: %d %+v", w.Code, server.Config)
+	}
+	w = postForm(r, "/update_config", "default_pattern=%7B%7B.Nope")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("a broken pattern must be refused, got %d", w.Code)
 	}
 }

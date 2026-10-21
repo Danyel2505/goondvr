@@ -201,6 +201,19 @@ type UpdateConfigRequest struct {
 	CFGlobalThreshold   int    `form:"cf_global_threshold"`
 	NotifyCooldownHours int    `form:"notify_cooldown_hours"`
 	NotifyStreamOnline  bool   `form:"notify_stream_online"`
+
+	// Detection of the channels on the air
+	PresenceCampaign string `form:"presence_campaign"`
+	PresenceListURL  string `form:"presence_list_url"`
+	PresenceInterval *int   `form:"presence_interval"`
+	// Automatic recording: free disk space (GB) below which it waits
+	AutoMinFreeGB *int `form:"auto_min_free_gb"`
+	// Defaults of the channels added from now on
+	DefaultFramerate   int    `form:"default_framerate"`
+	DefaultResolution  int    `form:"default_resolution"`
+	DefaultPattern     string `form:"default_pattern"`
+	DefaultMaxDuration *int   `form:"default_max_duration"`
+	DefaultMaxFilesize *int   `form:"default_max_filesize"`
 }
 
 // UpdateConfig updates the server configuration.
@@ -265,6 +278,38 @@ func UpdateConfig(c *gin.Context) {
 	server.Config.CFGlobalThreshold = req.CFGlobalThreshold
 	server.Config.NotifyCooldownHours = req.NotifyCooldownHours
 	server.Config.NotifyStreamOnline = req.NotifyStreamOnline
+
+	server.Config.PresenceCampaign = strings.TrimSpace(req.PresenceCampaign)
+	server.Config.PresenceListURL = strings.TrimSpace(req.PresenceListURL)
+	if v := req.PresenceInterval; v != nil {
+		server.Config.PresenceInterval = 0 // 0 = the default (60 s)
+		if *v >= 20 && *v <= 3600 {
+			server.Config.PresenceInterval = *v
+		}
+	}
+	if v := req.AutoMinFreeGB; v != nil && *v > 0 {
+		server.Config.AutoMinFreeGB = *v
+	}
+	if req.DefaultFramerate == 30 || req.DefaultFramerate == 60 {
+		server.Config.Framerate = req.DefaultFramerate
+	}
+	if req.DefaultResolution > 0 {
+		server.Config.Resolution = req.DefaultResolution
+	}
+	if pat := strings.TrimSpace(req.DefaultPattern); pat != "" {
+		if err := manager.ValidatePattern(pat); err != nil {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("default filename pattern: %w", err))
+			return
+		}
+		server.Config.Pattern = pat
+	}
+	if v := req.DefaultMaxDuration; v != nil && *v >= 0 {
+		server.Config.MaxDuration = *v
+	}
+	if v := req.DefaultMaxFilesize; v != nil && *v >= 0 {
+		server.Config.MaxFilesize = *v
+	}
+	server.Manager.ResetPresence() // the list may have just been configured
 
 	if err := manager.SaveSettings(); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("save settings: %w", err))

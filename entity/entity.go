@@ -26,6 +26,12 @@ type ChannelConfig struct {
 	MaxFilesize int    `json:"max_filesize"`
 	CreatedAt   int64  `json:"created_at"`
 
+	// Record automatically as soon as the channel is seen on the air (it is not paused then).
+	// Off by default. With AutoDiskCheck it is not started while free disk space is below the
+	// global threshold (Config.AutoMinFreeGB).
+	AutoRecord    bool `json:"auto_record,omitempty"`
+	AutoDiskCheck bool `json:"auto_disk_check,omitempty"`
+
 	// Persisted metadata — populated at runtime and saved so restarts don't lose them.
 	RoomTitle        string `json:"room_title,omitempty"`
 	Gender           string `json:"gender,omitempty"`
@@ -165,4 +171,8 @@ type Config struct {
 	PresenceCampaign string // Chaturbate affiliate (campaign) id for the list of rooms on the air; empty = list not used
 	PresenceListURL  string // advanced: full address of a list of rooms on the air (siren "users_online_endpoint")
 	PresenceInterval int    // seconds between two sweeps of the list; default 60
+
+	// AutoMinFreeGB is the global estimate used by the "record automatically" option of a
+	// channel: it is not started while the recording disk has less than this much free space.
+	AutoMinFreeGB int // default 10
 }
