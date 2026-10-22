@@ -1766,6 +1766,13 @@
                         if (Math.abs(d) > 0.5) window.scrollTo({ top: window.scrollY + d, behavior: 'instant' });
                     }
                     if (animate) {
+                        improved.forEach(function (b) { // a short green halo on the cards that moved up (where they ended up: before the glide below moves them back to where they were)
+                            const r = b.getBoundingClientRect();
+                            if (r.bottom > 0 && r.top < vh) {
+                                reorderAnims.push(b.animate([{ boxShadow: '0 0 0 2px rgba(46,160,67,0.95)' }, { boxShadow: '0 0 0 0 rgba(46,160,67,0)' }],
+                                    { duration: 1400, easing: 'ease-out' }));
+                            }
+                        });
                         let animated = 0;
                         for (let i = 0; i < want.length && animated < REORDER_MAX_ANIMATED; i++) {
                             const b = want[i], r = b.getBoundingClientRect();
@@ -1783,13 +1790,6 @@
                                 animated++;
                             }
                         }
-                        improved.forEach(function (b) { // a short green halo on the cards that moved up
-                            const r = b.getBoundingClientRect();
-                            if (r.bottom > 0 && r.top < vh) {
-                                reorderAnims.push(b.animate([{ boxShadow: '0 0 0 2px rgba(46,160,67,0.95)' }, { boxShadow: '0 0 0 0 rgba(46,160,67,0)' }],
-                                    { duration: 1400, easing: 'ease-out' }));
-                            }
-                        });
                     }
                 }
                 channelsList.style.overflowAnchor = '';
