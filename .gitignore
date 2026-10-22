@@ -5,3 +5,16 @@ bin
 chaturbate-dvr
 .codex
 .claude
+
+# Local secrets: never commit real values (commit only a .env.example with names and empty values)
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+*.local
+*.log
+cookies.txt

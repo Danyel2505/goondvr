@@ -208,6 +208,8 @@ _Note: You can paste either a semicolon-separated cookie string, e.g. `key1=valu
 
 On first start, the app creates local placeholder files in `conf/settings.json` and `conf/channels.json` automatically if they do not exist. Those files are intended to stay local and hold your machine-specific settings and cookies. In this repository, `conf/` is gitignored, so your local cookies and channels are not included in normal commits.
 
+**What is sensitive:** everything in `conf/` stays on your machine: cookies, `admin-password`, the ntfy token, the Discord webhook, the browser-helper token, the browser profile (`conf/browser-profile`) and the affiliate ID saved as `presence_campaign`. GoondVR does not read a `.env` file or environment variables (it is configured with command-line flags and `conf/settings.json`), so no `.env.example` is needed; if you add a `.env` for your own tooling it is gitignored, and only a `.env.example` with variable names and empty values should be committed.
+
 The easiest update path in the Web UI is the `Browser Import` box: paste Firefox `Copy as cURL` output for a successful `chatvideocontext` or `biocontext` request, and the app will extract the cookie jar and User-Agent automatically.
 
 Room-specific `tbu_*` cookies are ignored automatically and are not needed for normal Chaturbate recording.
