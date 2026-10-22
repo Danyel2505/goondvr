@@ -142,8 +142,19 @@ func (m *Manager) presenceLoop() {
 	}
 }
 
-// presenceStep does what is due and returns how long to sleep.
+// presenceStep does what is due and returns how long to sleep. After the
+// detection it lets the channels that record automatically react to it
+// (auto.go).
 func (m *Manager) presenceStep(req *internal.Req) time.Duration {
+	wait := m.detectStep(req)
+	if m.autoStep() && wait > autoStartGap {
+		wait = autoStartGap // some channels are waiting for their turn to start
+	}
+	return wait
+}
+
+// detectStep does the detection that is due and returns how long to sleep.
+func (m *Manager) detectStep(req *internal.Req) time.Duration {
 	if m.cloudflareBlockedRecently() {
 		return presenceIdlePoll
 	}

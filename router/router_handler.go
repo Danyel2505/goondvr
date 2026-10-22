@@ -71,6 +71,49 @@ func CreateChannel(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/")
 }
 
+// UpdateChannelRequest is the body of a change to the settings of one channel.
+// Only the fields that are sent change. The checkboxes are sent as "1" / "0".
+type UpdateChannelRequest struct {
+	Resolution    *int    `form:"resolution"`
+	Framerate     *int    `form:"framerate"`
+	Pattern       *string `form:"pattern"`
+	MaxDuration   *int    `form:"max_duration"`
+	MaxFilesize   *int    `form:"max_filesize"`
+	AutoRecord    *bool   `form:"auto_record"`
+	AutoDiskCheck *bool   `form:"auto_disk_check"` // "1" = respect the free-space limit (the default)
+}
+
+// UpdateChannel changes the settings of one channel. The card is redrawn by the
+// event stream, so the answer is empty (204) or the reason it was refused (400).
+func UpdateChannel(c *gin.Context) {
+	var req UpdateChannelRequest
+	if err := c.ShouldBind(&req); err != nil {
+		c.String(http.StatusBadRequest, "bind: %v", err)
+		return
+	}
+	patch := entity.ChannelPatch{
+		Resolution:  req.Resolution,
+		Framerate:   req.Framerate,
+		MaxDuration: req.MaxDuration,
+		MaxFilesize: req.MaxFilesize,
+		AutoRecord:  req.AutoRecord,
+	}
+	if req.Pattern != nil {
+		p := strings.TrimSpace(*req.Pattern)
+		patch.Pattern = &p
+	}
+	if req.AutoDiskCheck != nil {
+		noCheck := !*req.AutoDiskCheck
+		patch.AutoNoDiskCheck = &noCheck
+	}
+	if err := server.Manager.UpdateChannel(c.Param("channelID"), patch); err != nil {
+		c.String(http.StatusBadRequest, "%v", err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+	c.Writer.WriteHeaderNow()
+}
+
 // StopChannel stops a channel.
 func StopChannel(c *gin.Context) {
 	server.Manager.StopChannel(c.Param("channelID"))

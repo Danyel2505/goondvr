@@ -113,7 +113,7 @@ func (ch *Channel) generateFilenameLocked() (string, error) {
 	var buf bytes.Buffer
 
 	// Parse the filename pattern defined in the channel's config
-	tpl, err := template.New("filename").Parse(ch.Config.Pattern)
+	tpl, err := template.New("filename").Parse(ch.Settings().Pattern)
 	if err != nil {
 		return "", fmt.Errorf("filename pattern error: %w", err)
 	}
@@ -184,7 +184,7 @@ func completedDirForChannel(ch *Channel) string {
 	if server.Config.CompletedDir != "" {
 		return server.Config.CompletedDir
 	}
-	return filepath.Join(recordingDirFromPattern(ch.Config.Pattern), "completed")
+	return filepath.Join(recordingDirFromPattern(ch.Settings().Pattern), "completed")
 }
 
 func finalOutputExt(filename string) string {
@@ -206,7 +206,7 @@ func finalOutputPath(filename string) string {
 // by walking the recording directory for files whose name starts with the username.
 // The result is stored in TotalDiskUsageBytes.
 func (ch *Channel) ScanTotalDiskUsage() {
-	recordingDir := filepath.Clean(recordingDirFromPattern(ch.Config.Pattern))
+	recordingDir := filepath.Clean(recordingDirFromPattern(ch.Settings().Pattern))
 	dirs := []string{recordingDir}
 	completedDir := completedDirForChannel(ch)
 	cleanCompletedDir := filepath.Clean(completedDir)
@@ -244,11 +244,12 @@ func (ch *Channel) ShouldSwitchFile() bool {
 }
 
 func (ch *Channel) shouldSwitchFileLocked() bool {
-	maxFilesizeBytes := ch.Config.MaxFilesize * 1024 * 1024
-	maxDurationSeconds := ch.Config.MaxDuration * 60
+	set := ch.Settings()
+	maxFilesizeBytes := set.MaxFilesize * 1024 * 1024
+	maxDurationSeconds := set.MaxDuration * 60
 
-	return (ch.Duration >= float64(maxDurationSeconds) && ch.Config.MaxDuration > 0) ||
-		(ch.Filesize >= maxFilesizeBytes && ch.Config.MaxFilesize > 0)
+	return (ch.Duration >= float64(maxDurationSeconds) && set.MaxDuration > 0) ||
+		(ch.Filesize >= maxFilesizeBytes && set.MaxFilesize > 0)
 }
 
 // isMP4InitSegment reports whether b looks like an fMP4 init segment containing
@@ -304,7 +305,7 @@ func (ch *Channel) finalizeRecording(filename string) {
 
 	completedDir := completedDirForChannel(ch)
 	if completedDir != "" {
-		dst, err := moveRecordingToDir(finalPath, recordingDirFromPattern(ch.Config.Pattern), completedDir)
+		dst, err := moveRecordingToDir(finalPath, recordingDirFromPattern(ch.Settings().Pattern), completedDir)
 		if err != nil {
 			ch.Error("move completed recording `%s`: %s", finalPath, err.Error())
 		} else {

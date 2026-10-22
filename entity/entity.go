@@ -26,11 +26,11 @@ type ChannelConfig struct {
 	MaxFilesize int    `json:"max_filesize"`
 	CreatedAt   int64  `json:"created_at"`
 
-	// Record automatically as soon as the channel is seen on the air (it is not paused then).
-	// Off by default. With AutoDiskCheck it is not started while free disk space is below the
-	// global threshold (Config.AutoMinFreeGB).
-	AutoRecord    bool `json:"auto_record,omitempty"`
-	AutoDiskCheck bool `json:"auto_disk_check,omitempty"`
+	// Record automatically as soon as the channel is seen on the air: a paused channel with this
+	// on is started by the presence engine. Off by default. Unless AutoNoDiskCheck is set it is not
+	// started while the free disk space is below the global threshold (Config.AutoMinFreeGB).
+	AutoRecord      bool `json:"auto_record,omitempty"`
+	AutoNoDiskCheck bool `json:"auto_no_disk_check,omitempty"`
 
 	// Persisted metadata — populated at runtime and saved so restarts don't lose them.
 	RoomTitle        string `json:"room_title,omitempty"`
@@ -39,6 +39,28 @@ type ChannelConfig struct {
 	StreamedAt       int64  `json:"streamed_at,omitempty"`
 	// Tags the site gives the room (lower case); filled in from the list of rooms on the air.
 	Tags []string `json:"tags,omitempty"`
+}
+
+// ChannelSettings are the settings of a channel that its settings dialog edits.
+type ChannelSettings struct {
+	Resolution      int
+	Framerate       int
+	Pattern         string
+	MaxDuration     int // minutes, 0 = no limit
+	MaxFilesize     int // MB, 0 = no limit
+	AutoRecord      bool
+	AutoNoDiskCheck bool
+}
+
+// ChannelPatch is a change to ChannelSettings: only the fields that are set change.
+type ChannelPatch struct {
+	Resolution      *int
+	Framerate       *int
+	Pattern         *string
+	MaxDuration     *int
+	MaxFilesize     *int
+	AutoRecord      *bool
+	AutoNoDiskCheck *bool
 }
 
 func (c *ChannelConfig) Sanitize() {
@@ -113,8 +135,10 @@ type ChannelInfo struct {
 	SummaryCardImage string
 	LiveThumbURL     string // live-updating thumbnail; empty = use platform default
 	Tags             []string
-	Site             string // "chaturbate" (default) or "stripchat"
-	SiteDomain       string // pre-computed site URL, e.g. "https://chaturbate.com/" or "https://stripchat.com/"
+	Settings         ChannelSettings // what the settings dialog of the card edits
+	AutoWaiting      bool            // auto-record is on and the channel is on the air, but it is not started: low free disk space
+	Site             string          // "chaturbate" (default) or "stripchat"
+	SiteDomain       string          // pre-computed site URL, e.g. "https://chaturbate.com/" or "https://stripchat.com/"
 }
 
 // Live reports whether the channel is broadcasting (recorded or not).

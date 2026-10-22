@@ -28,6 +28,9 @@ type Manager struct {
 
 	presence presenceEngine // keeps the "on air" mark of the channels up to date (presence.go)
 
+	cfgMu         sync.Mutex // one change to the channel list or to the filename patterns at a time (pattern conflicts)
+	autoLastStart time.Time  // last automatic start (auto.go); only the presence loop touches it
+
 	startTime  time.Time
 	cfBlocksMu sync.Mutex
 	cfBlocks   map[string]time.Time // username -> last CF block time
@@ -570,17 +573,19 @@ func (m *Manager) CreateChannel(conf *entity.ChannelConfig, shouldSave bool) err
 		return fmt.Errorf("channel %s (%s) already exists", conf.Username, conf.Site)
 	}
 
-	var existing []*entity.ChannelConfig
-	m.Channels.Range(func(_, value any) bool {
-		existing = append(existing, value.(*channel.Channel).Config)
-		return true
-	})
-	if err := detectPatternConflict(conf, existing); err != nil {
+	m.cfgMu.Lock()
+	if err := detectPatternConflict(conf, m.channelConfigs()); err != nil {
+		m.cfgMu.Unlock()
 		return err
+	}
+	if _, ok := m.Channels.Load(channelID); ok { // another request added it while the patterns were checked
+		m.cfgMu.Unlock()
+		return fmt.Errorf("channel %s (%s) already exists", conf.Username, conf.Site)
 	}
 
 	ch := channel.New(conf)
 	m.Channels.Store(channelID, ch)
+	m.cfgMu.Unlock()
 
 	go ch.Resume(0)
 	m.kickPresence()
@@ -614,7 +619,9 @@ func (m *Manager) PauseChannel(channelID string) error {
 	if !ok {
 		return nil
 	}
-	thing.(*channel.Channel).Pause()
+	ch := thing.(*channel.Channel)
+	ch.UserPaused()
+	ch.Pause()
 
 	if err := m.SaveConfig(); err != nil {
 		return fmt.Errorf("save config: %w", err)
@@ -628,7 +635,9 @@ func (m *Manager) ResumeChannel(channelID string) error {
 	if !ok {
 		return nil
 	}
-	thing.(*channel.Channel).Resume(0)
+	ch := thing.(*channel.Channel)
+	ch.UserResumed()
+	ch.Resume(0)
 
 	if err := m.SaveConfig(); err != nil {
 		return fmt.Errorf("save config: %w", err)

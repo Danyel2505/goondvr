@@ -1,3 +1,5 @@
+{{ define "card_tools" }}<span class="card-tools"><button type="button" class="ct-btn" data-act="copy" data-link="{{ .SiteDomain }}{{ .Username }}" title="Copy the channel link"><span class="ct-glyph">&#128279;</span><span class="ct-label">Copy link</span></button><button type="button" class="ct-btn{{ if .Settings.AutoRecord }}{{ if .AutoWaiting }} is-wait{{ else }} is-on{{ end }}{{ end }}" data-act="auto" hx-post="/update_channel/{{ .ChannelID }}" hx-vals='{"auto_record":"{{ if .Settings.AutoRecord }}0{{ else }}1{{ end }}"}' hx-swap="none" hx-disabled-elt="this" title="{{ if .Settings.AutoRecord }}{{ if .AutoWaiting }}Auto-record is on, waiting: not enough free disk space. Click to turn it off.{{ else }}Auto-record is on: it starts by itself when the channel goes live. Click to turn it off.{{ end }}{{ else }}Auto-record is off. Click to start recording by itself when the channel goes live.{{ end }}"><span class="ct-glyph">&#9210;</span><span class="ct-label">Auto: {{ if .Settings.AutoRecord }}{{ if .AutoWaiting }}waiting for disk{{ else }}ON{{ end }}{{ else }}OFF{{ end }}</span></button><button type="button" class="ct-btn" data-act="settings" data-channel-id="{{ .ChannelID }}" data-username="{{ .Username }}" data-site-label="{{ if eq .Site "stripchat" }}Stripchat{{ else }}Chaturbate{{ end }}" data-res="{{ .Settings.Resolution }}" data-fps="{{ .Settings.Framerate }}" data-pattern="{{ .Settings.Pattern }}" data-max-size="{{ .Settings.MaxFilesize }}" data-max-dur="{{ .Settings.MaxDuration }}" data-auto="{{ if .Settings.AutoRecord }}1{{ else }}0{{ end }}" data-disk-check="{{ if .Settings.AutoNoDiskCheck }}0{{ else }}1{{ end }}" title="Settings of this channel"><span class="ct-glyph">&#9881;</span><span class="ct-label">Settings</span></button></span>{{ end }}
+
 {{ define "channel_thumb" }}
 {{ if eq .ViewMode "expanded" }}
 <div class="view-expanded">
@@ -74,6 +76,8 @@
     {{ end }}
 
     {{ if .Tags }}<div class="card-tags">{{ range $i, $t := .Tags }}{{ if lt $i 12 }}<button type="button" class="card-tag" data-tag="{{ $t }}">{{ $t }}</button>{{ end }}{{ end }}</div>{{ end }}
+
+    <div class="has-top-spaced-small">{{ template "card_tools" . }}</div>
 
     <div class="ts-divider has-top-spaced"></div>
 
@@ -178,6 +182,7 @@
             {{ if .Filesize }}<span class="item"><span class="ts-icon is-chart-pie-icon"></span> {{ .Filesize }}</span>{{ end }}
             {{ if .TotalDiskUsage }}<span class="item"><span class="ts-icon is-hard-drive-icon"></span> {{ .TotalDiskUsage }}</span>{{ end }}
         </div>
+        <div class="has-top-spaced-small">{{ template "card_tools" . }}</div>
         <div class="ts-grid is-2-columns has-top-spaced">
             <div class="column">
                 {{ if .IsPaused }}
@@ -210,6 +215,7 @@
     {{ if .Duration }}<div class="ts-text is-small is-description collapsed-stat">{{ .Duration }}</div>{{ end }}
     {{ if .Filesize }}<div class="ts-text is-small is-description collapsed-stat">{{ .Filesize }}</div>{{ end }}
     <div class="collapsed-actions">
+        {{ template "card_tools" . }}
         {{ if .IsPaused }}
         <form><button class="ts-button is-small is-start-icon" hx-post="/resume_channel/{{ .ChannelID }}" hx-swap="none" hx-disabled-elt="this" data-pending-label="Resuming..."><span class="ts-icon is-play-icon"></span>Resume</button></form>
         {{ else }}

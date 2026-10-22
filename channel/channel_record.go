@@ -219,7 +219,8 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 		ch.UpdateThumb()
 	}
 
-	playlist, err := chaturbate.FetchPlaylist(ctx, streamInfo.HLSURL, ch.Config.Resolution, ch.Config.Framerate, streamInfo.CDNReferer, streamInfo.MouflonPDKey)
+	set := ch.Settings()
+	playlist, err := chaturbate.FetchPlaylist(ctx, streamInfo.HLSURL, set.Resolution, set.Framerate, streamInfo.CDNReferer, streamInfo.MouflonPDKey)
 	if err != nil {
 		return fmt.Errorf("get playlist: %w", err)
 	}
@@ -264,7 +265,7 @@ func (ch *Channel) RecordStream(ctx context.Context, runID uint64, s site.Site, 
 			streamType = "LL-HLS (video only)"
 		}
 	}
-	ch.Info("stream type: %s, resolution %dp (target: %dp), framerate %dfps (target: %dfps)", streamType, playlist.Resolution, ch.Config.Resolution, playlist.Framerate, ch.Config.Framerate)
+	ch.Info("stream type: %s, resolution %dp (target: %dp), framerate %dfps (target: %dfps)", streamType, playlist.Resolution, set.Resolution, playlist.Framerate, set.Framerate)
 
 	return playlist.WatchSegments(ctx, func(b []byte, duration float64) error {
 		return ch.handleSegmentForMonitor(runID, b, duration)

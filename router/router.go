@@ -102,6 +102,7 @@ func SetupViews(r *gin.Engine) {
 	r.POST("/stop_channel/:channelID", StopChannel)
 	r.POST("/pause_channel/:channelID", PauseChannel)
 	r.POST("/resume_channel/:channelID", ResumeChannel)
+	r.POST("/update_channel/:channelID", UpdateChannel)
 	r.GET("/api/stats", Stats)
 }
 

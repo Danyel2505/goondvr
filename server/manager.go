@@ -14,6 +14,9 @@ type IManager interface {
 	StopChannel(channelID string) error
 	PauseChannel(channelID string) error
 	ResumeChannel(channelID string) error
+	// UpdateChannel changes the settings of one channel (see entity.ChannelPatch). The
+	// error says what is wrong with a value; it is meant to be shown to the user.
+	UpdateChannel(channelID string, p entity.ChannelPatch) error
 	ChannelInfo() []*entity.ChannelInfo
 	// Publish pushes the given kind of update to the web UI. It never blocks and
 	// reports false when the event could not be queued (slow browser), in which

@@ -104,6 +104,19 @@
             .card-tags { margin-top: 0.4rem; }
             .card-tag { font-size: 0.72rem; padding: 0 0.45rem; }
 
+            /* Buttons of a card: copy link / automatic recording / settings */
+            .card-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+            .ct-btn { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.28rem 0.5rem; border-radius: 6px; border: 1px solid rgba(128,128,128,0.45);
+                      background: transparent; color: inherit; font: inherit; font-size: 0.78rem; line-height: 1; cursor: pointer; }
+            .ct-btn:hover { background: rgba(128,128,128,0.18); }
+            .ct-btn:disabled { opacity: 0.55; cursor: progress; }
+            .ct-btn.is-on { background: #c0392b; border-color: #c0392b; color: #fff; }
+            .ct-btn.is-wait { background: #b7791f; border-color: #b7791f; color: #fff; }
+            .ct-btn .ct-label { display: none; }
+            .view-expanded .ct-btn .ct-label { display: inline; }
+            #cd-error { display: none; margin-top: 0.75rem; color: #c0392b; font-size: 0.85rem; }
+            #cd-error.is-shown { display: block; }
+
             /* Sections of the list (recording / on air / retrying / paused) */
             #channels-list > .section-head { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.15rem 0; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
             #channels-list > .section-head[hidden] { display: none; }
@@ -856,6 +869,119 @@
             </div>
         </dialog>
         <!-- / Create Dialog -->
+
+        <!-- Channel settings dialog (one for all the cards; filled in from the button that opened it) -->
+        <dialog id="channel-dialog" class="ts-modal" style="--width: 680px">
+            <div class="content">
+                <form id="channel-form" autocomplete="off">
+                    <div class="ts-content is-horizontally-padded is-secondary">
+                        <div class="ts-grid">
+                            <div class="column is-fluid">
+                                <div class="ts-header">Channel settings</div>
+                                <div id="cd-who" class="ts-text is-description is-small"></div>
+                            </div>
+                            <div class="column">
+                                <button type="button" class="ts-close is-rounded is-large is-secondary" data-cd-close></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="ts-divider"></div>
+
+                    <div class="ts-content is-vertically-padded">
+                        <div class="ts-control is-wide">
+                            <div class="label">Resolution</div>
+                            <div class="content">
+                                <div class="ts-select">
+                                    <select name="resolution" id="cd-resolution">
+                                        <option value="2160">4K</option>
+                                        <option value="1440">2K</option>
+                                        <option value="1080">1080p</option>
+                                        <option value="720">720p</option>
+                                        <option value="540">540p</option>
+                                        <option value="480">480p</option>
+                                        <option value="240">240p</option>
+                                    </select>
+                                </div>
+                                <div class="ts-text is-description has-top-spaced-small">The lower resolution will be used if the selected resolution is not available. It applies to the next stream.</div>
+                            </div>
+                        </div>
+
+                        <div class="ts-control is-wide has-top-spaced-large">
+                            <div class="label">Framerate</div>
+                            <div class="content is-padded">
+                                <div class="ts-wrap is-compact is-vertical">
+                                    <label class="ts-radio"><input type="radio" name="framerate" value="60" /> 60 FPS (or lower)</label>
+                                    <label class="ts-radio"><input type="radio" name="framerate" value="30" /> 30 FPS</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="ts-control is-wide has-top-spaced-large">
+                            <div class="label">Filename Pattern</div>
+                            <div class="content">
+                                <div class="ts-input"><input type="text" name="pattern" id="cd-pattern" /></div>
+                                <div class="ts-text is-description has-top-spaced-small">Used for the next file of this channel.</div>
+                            </div>
+                        </div>
+
+                        <div class="ts-control is-wide has-top-spaced-large">
+                            <div class="label">Splitting Options</div>
+                            <div class="content">
+                                <div class="ts-content is-padded is-secondary">
+                                    <div class="ts-grid is-relaxed is-2-columns">
+                                        <div class="column">
+                                            <div class="ts-text is-bold">Max Filesize</div>
+                                            <div class="ts-input is-end-labeled has-top-spaced-small">
+                                                <input type="number" name="max_filesize" id="cd-max-size" min="0" />
+                                                <span class="label">MB</span>
+                                            </div>
+                                        </div>
+                                        <div class="column">
+                                            <div class="ts-text is-bold">Max Duration</div>
+                                            <div class="ts-input is-end-labeled has-top-spaced-small">
+                                                <input type="number" name="max_duration" id="cd-max-dur" min="0" />
+                                                <span class="label">Min(s)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="ts-text is-description has-top-spaced">Splitting will be disabled if both options are 0.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="ts-divider has-vertically-spaced-large"></div>
+
+                        <div class="ts-control is-wide">
+                            <div class="label">Automatic recording</div>
+                            <div class="content">
+                                <label class="ts-switch">
+                                    <input type="checkbox" id="cd-auto" />
+                                    Record this channel by itself when it goes live
+                                </label>
+                                <div class="ts-text is-description has-top-spaced-small">Off by default. While it is on, the channel waits paused and starts as soon as it is seen on the air; it waits paused again after the broadcast.</div>
+                                <label class="ts-checkbox has-top-spaced">
+                                    <input type="checkbox" id="cd-disk" />
+                                    Only if at least <strong>{{ .Config.AutoMinFreeGB }} GB</strong> are free on the recording disk
+                                </label>
+                                <div class="ts-text is-description has-top-spaced-small">The limit is the same for every channel (Settings &rarr; Automatic recording).</div>
+                            </div>
+                        </div>
+                        <div id="cd-error" role="alert"></div>
+                    </div>
+
+                    <div class="ts-divider"></div>
+
+                    <div class="ts-content is-secondary is-horizontally-padded">
+                        <div class="ts-wrap is-end-aligned">
+                            <button type="button" class="ts-button is-outlined is-secondary" data-cd-close>Cancel</button>
+                            <button type="submit" id="cd-save" class="ts-button is-primary">Save</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </dialog>
+        <!-- / Channel settings dialog -->
 
         <script>
             const LIVE_THUMB_URL = (username, site, channelID) => {
@@ -1760,6 +1886,94 @@
                 }
                 return true;
             }
+
+            // ---- Buttons of a card: copy link, settings -----------------------------
+            // (The Auto button is a plain htmx post, see channel_info.html.) One delegated
+            // handler for every card, so the buttons keep working however the cards are redrawn.
+            function copyText(text) {
+                if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+                return new Promise(function (resolve, reject) { // plain http on a network address: no clipboard API
+                    const ta = document.createElement('textarea');
+                    ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+                    document.body.appendChild(ta); ta.select();
+                    let ok = false;
+                    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+                    ta.remove();
+                    ok ? resolve() : reject(new Error('copy failed'));
+                });
+            }
+            function flashGlyph(btn, mark) {
+                const g = btn.querySelector('.ct-glyph');
+                if (!g) return;
+                const before = g.textContent;
+                g.textContent = mark;
+                setTimeout(function () { if (g.isConnected) g.textContent = before; }, 1300);
+            }
+
+            const channelDialog = document.getElementById('channel-dialog');
+            const channelForm = document.getElementById('channel-form');
+            const cdError = document.getElementById('cd-error');
+            let cdChannelID = '';
+            function openChannelDialog(btn) {
+                if (!channelDialog || !channelForm) return;
+                const d = btn.dataset;
+                cdChannelID = d.channelId;
+                document.getElementById('cd-who').textContent = d.username + ' · ' + d.siteLabel;
+                const sel = document.getElementById('cd-resolution');
+                if (!Array.from(sel.options).some(function (o) { return o.value === d.res; })) { // set by hand to a value that is not in the list
+                    const o = document.createElement('option'); o.value = d.res; o.textContent = d.res + 'p'; sel.appendChild(o);
+                }
+                sel.value = d.res;
+                channelForm.querySelectorAll('input[name=framerate]').forEach(function (r) { r.checked = r.value === d.fps; });
+                document.getElementById('cd-pattern').value = d.pattern;
+                document.getElementById('cd-max-size').value = d.maxSize;
+                document.getElementById('cd-max-dur').value = d.maxDur;
+                document.getElementById('cd-auto').checked = d.auto === '1';
+                document.getElementById('cd-disk').checked = d.diskCheck === '1';
+                cdError.classList.remove('is-shown');
+                document.getElementById('cd-save').disabled = false;
+                if (!channelDialog.open) channelDialog.showModal();
+            }
+            function closeChannelDialog() { if (channelDialog && channelDialog.open) channelDialog.close(); }
+
+            document.body.addEventListener('click', function (e) {
+                const btn = e.target.closest('.ct-btn');
+                if (btn) {
+                    if (btn.dataset.act === 'copy') {
+                        copyText(btn.dataset.link).then(function () { flashGlyph(btn, '\u2713'); }, function () { flashGlyph(btn, '!'); });
+                    } else if (btn.dataset.act === 'settings') {
+                        openChannelDialog(btn);
+                    }
+                    return;
+                }
+                if (e.target.closest('[data-cd-close]')) closeChannelDialog();
+            });
+            if (channelForm) channelForm.addEventListener('submit', function (e) {
+                e.preventDefault();
+                const fd = new URLSearchParams();
+                fd.set('resolution', document.getElementById('cd-resolution').value);
+                const fps = channelForm.querySelector('input[name=framerate]:checked');
+                if (fps) fd.set('framerate', fps.value);
+                fd.set('pattern', document.getElementById('cd-pattern').value);
+                fd.set('max_filesize', document.getElementById('cd-max-size').value || '0');
+                fd.set('max_duration', document.getElementById('cd-max-dur').value || '0');
+                fd.set('auto_record', document.getElementById('cd-auto').checked ? '1' : '0');
+                fd.set('auto_disk_check', document.getElementById('cd-disk').checked ? '1' : '0');
+                const save = document.getElementById('cd-save');
+                save.disabled = true;
+                fetch('/update_channel/' + encodeURIComponent(cdChannelID), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: fd.toString()
+                }).then(function (res) {
+                    if (res.ok) { closeChannelDialog(); return; }
+                    return res.text().then(function (t) { throw new Error(t || ('HTTP ' + res.status)); });
+                }).catch(function (err) {
+                    cdError.textContent = err.message;
+                    cdError.classList.add('is-shown');
+                    save.disabled = false;
+                });
+            });
 
             // Initial setup on page load
             document.addEventListener("DOMContentLoaded", function() {

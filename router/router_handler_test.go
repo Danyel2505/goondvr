@@ -1,6 +1,7 @@
 package router
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,14 @@ type fakeManager struct {
 	server.IManager
 	paused, resumed []string
 	resets          int
+	updatedID       string
+	updated         entity.ChannelPatch
+	updateErr       error
+}
+
+func (f *fakeManager) UpdateChannel(id string, p entity.ChannelPatch) error {
+	f.updatedID, f.updated = id, p
+	return f.updateErr
 }
 
 func (f *fakeManager) ResetPresence() { f.resets++ }
@@ -125,5 +134,51 @@ func TestUpdateConfigSavesPresenceAndNewChannelDefaults(t *testing.T) {
 	w = postForm(r, "/update_config", "default_pattern=%7B%7B.Nope")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("a broken pattern must be refused, got %d", w.Code)
+	}
+}
+
+func TestUpdateChannelSendsOnlyWhatTheFormHas(t *testing.T) {
+	r, fm := newTestRouter(t)
+	r.POST("/update_channel/:channelID", UpdateChannel)
+
+	// the auto-record button sends just its own field
+	w := postForm(r, "/update_channel/chaturbate__a", "auto_record=1")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204", w.Code)
+	}
+	p := fm.updated
+	if fm.updatedID != "chaturbate__a" || p.AutoRecord == nil || !*p.AutoRecord {
+		t.Fatalf("auto_record=1 must turn it on: %+v", p)
+	}
+	if p.Resolution != nil || p.Framerate != nil || p.Pattern != nil || p.MaxDuration != nil || p.MaxFilesize != nil || p.AutoNoDiskCheck != nil {
+		t.Fatalf("nothing else may change: %+v", p)
+	}
+
+	// the dialog sends everything; the disk check is the default, so "1" means NOT skipping it
+	w = postForm(r, "/update_channel/chaturbate__a",
+		"resolution=720&framerate=30&pattern=+videos%2F%7B%7B.Username%7D%7D+&max_duration=15&max_filesize=700&auto_record=0&auto_disk_check=0")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d", w.Code)
+	}
+	p = fm.updated
+	if *p.Resolution != 720 || *p.Framerate != 30 || *p.Pattern != "videos/{{.Username}}" || *p.MaxDuration != 15 || *p.MaxFilesize != 700 {
+		t.Fatalf("values: %+v", p)
+	}
+	if *p.AutoRecord || !*p.AutoNoDiskCheck {
+		t.Fatalf("auto_record=0, auto_disk_check=0 => off, and the check is skipped: %+v", p)
+	}
+	postForm(r, "/update_channel/chaturbate__a", "auto_disk_check=1")
+	if *fm.updated.AutoNoDiskCheck {
+		t.Fatal("auto_disk_check=1 means the check is made")
+	}
+
+	// a refusal reaches the user as text
+	fm.updateErr = errors.New("framerate must be 30 or 60")
+	w = postForm(r, "/update_channel/chaturbate__a", "framerate=45")
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "framerate must be 30 or 60") {
+		t.Fatalf("refusal: %d %q", w.Code, w.Body.String())
+	}
+	if w = postForm(r, "/update_channel/chaturbate__a", "framerate=abc"); w.Code != http.StatusBadRequest {
+		t.Fatalf("a value that is not a number must be a 400, got %d", w.Code)
 	}
 }

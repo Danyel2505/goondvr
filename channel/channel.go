@@ -73,6 +73,12 @@ type Channel struct {
 	liveThumbAsked time.Time
 	liveThumbFails int
 	CFBlockCount   int
+	// Automatic recording (see settings.go), guarded by stateMu.
+	autoStarted  bool           // the presence engine resumed the channel; it is paused again once it is off the air
+	autoOffSince time.Time      // since when it has been off the air after being auto-started
+	autoWaiting  bool           // wants to start but is held back (low free disk space)
+	autoHold     bool           // the user paused it while it was on the air: not started again until that broadcast is over
+	scanWG       sync.WaitGroup // background scans of the recordings started by Apply
 
 	logsMu sync.RWMutex
 	Logs   []string
@@ -275,6 +281,8 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	available := ch.Available || ch.IsOnline
 	edgeRegion, summaryCard, liveThumb := ch.EdgeRegion, ch.SummaryCardImage, ch.LiveThumbURL
 	tags := ch.Config.Tags // replaced as a whole under stateMu, never edited in place
+	set := ch.settingsLocked()
+	autoWaiting := ch.autoWaiting && set.AutoRecord
 	streamedAtUnix := ch.StreamedAt
 	ch.stateMu.RUnlock()
 	var streamedAt string
@@ -307,8 +315,8 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		SortKey:          strings.ToLower(ch.Config.Username) + " " + strings.ToLower(site),
 		IsPaused:         paused,
 		Username:         ch.Config.Username,
-		MaxDuration:      internal.FormatDuration(float64(ch.Config.MaxDuration * 60)), // MaxDuration from config is in minutes
-		MaxFilesize:      internal.FormatFilesize(ch.Config.MaxFilesize * 1024 * 1024), // MaxFilesize from config is in MB
+		MaxDuration:      internal.FormatDuration(float64(set.MaxDuration * 60)), // MaxDuration from config is in minutes
+		MaxFilesize:      internal.FormatFilesize(set.MaxFilesize * 1024 * 1024), // MaxFilesize from config is in MB
 		StreamedAt:       streamedAt,
 		CreatedAt:        ch.Config.CreatedAt,
 		Duration:         internal.FormatDuration(duration),
@@ -324,6 +332,8 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		SummaryCardImage: summaryCard,
 		LiveThumbURL:     liveThumb,
 		Tags:             tags,
+		Settings:         set,
+		AutoWaiting:      autoWaiting,
 		Site:             site,
 		SiteDomain:       siteDomain,
 	}
@@ -621,5 +631,9 @@ func (ch *Channel) ConfigSnapshot() entity.ChannelConfig {
 	defer ch.monitorMu.Unlock()
 	ch.stateMu.RLock()
 	defer ch.stateMu.RUnlock()
-	return *ch.Config
+	snap := *ch.Config
+	if ch.autoStarted {
+		snap.IsPaused = true // what the user chose: armed and waiting (see settings.go)
+	}
+	return snap
 }

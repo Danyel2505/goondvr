@@ -75,6 +75,7 @@ func presenceRig(t *testing.T, campaign string, names ...string) (*Manager, *fak
 			ch := v.(*channel.Channel)
 			ch.Stop()
 			ch.WaitPublisherExit()
+			ch.WaitBackground()
 			return true
 		})
 		server.Config, server.Manager = oldCfg, oldMgr
