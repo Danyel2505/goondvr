@@ -87,6 +87,15 @@ func (ch *Channel) Apply(p entity.ChannelPatch) (patternChanged, autoChanged boo
 // it costs nothing but the shared list sweep until the next time. A channel
 // that the user paused or resumed by hand is left alone (ClearAuto).
 
+// AutoActive reports whether auto-record has anything to do with the channel
+// (it is armed, or it started the channel, or it is holding it back). The
+// engine skips every other channel without taking a write lock.
+func (ch *Channel) AutoActive() bool {
+	ch.stateMu.RLock()
+	defer ch.stateMu.RUnlock()
+	return ch.Config.AutoRecord || ch.autoStarted || ch.autoWaiting
+}
+
 // AutoWant reports whether the engine should start the channel now: auto-record
 // is on, it is paused, not recording, on the air, and the user did not pause it
 // on purpose during this broadcast. noDiskCheck is the channel's choice to

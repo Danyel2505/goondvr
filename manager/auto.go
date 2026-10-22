@@ -41,6 +41,9 @@ func (m *Manager) autoStep() (pending bool) {
 
 	m.Channels.Range(func(_, v any) bool {
 		ch := v.(*channel.Channel)
+		if !ch.AutoActive() {
+			return true // auto-record is off (the default): nothing to do, and no write lock taken
+		}
 		ch.AutoRelax(autoRelaxAfter)
 
 		want, noDiskCheck, pattern := ch.AutoWant()
