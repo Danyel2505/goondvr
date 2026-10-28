@@ -381,6 +381,9 @@ func (ch *Channel) WaitPublisherExit() { <-ch.publisherExited }
 // It's only be used when program starting and trying to resume all channels at once.
 func (ch *Channel) Resume(startSeq int) {
 	go func() {
+		if shuttingDown() {
+			return // the program is closing: nothing new starts
+		}
 		if startSeq > 0 {
 			select {
 			case <-time.After(time.Duration(startSeq) * time.Second):

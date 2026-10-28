@@ -364,6 +364,12 @@ Pattern: video/{{.Username}}/{{.Year}}-{{.Month}}-{{.Day}}_{{.Hour}}-{{.Minute}}
 
 _Note: Legacy HLS streams are saved as `.ts`. LL-HLS streams are saved as `.mp4` with muxed video and audio._
 
+# 🛟 Closing the program, crashes and backups
+
+- **Closing the console window** stops every recording within a few seconds (Windows ends the process about 5 s after the window is closed). Slow work such as the ffmpeg conversion is not started then; the recordings are listed in `conf/open-recordings.json` and finished the next time the program starts (the unfinished end is cut off and the seek index is built).
+- **Recordings that were cut short** (power loss, task killed, full disk) are repaired the same way at the next start. Only the incomplete end of a file is removed.
+- **`conf/channels.json` and `conf/settings.json`** are written atomically (a copy is written and swapped in), so a crash cannot leave a half-written file. A backup of each is kept in `conf/backup/` (at start, then every 10 minutes while they change, and when the program closes; the last 30 are kept). If a file is damaged at start, the newest good backup is restored and the damaged file is kept next to it as `*.corrupt-<time>`.
+
 # 🤔 Frequently Asked Questions
 
 **Q: The program closes immediately on Windows.**

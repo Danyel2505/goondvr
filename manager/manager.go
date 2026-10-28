@@ -5,18 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"text/template"
 	"time"
 
 	"github.com/HeapOfChaos/goondvr/channel"
 	"github.com/HeapOfChaos/goondvr/entity"
 	"github.com/HeapOfChaos/goondvr/notifier"
+	"github.com/HeapOfChaos/goondvr/persist"
 	"github.com/HeapOfChaos/goondvr/router/view"
 	"github.com/HeapOfChaos/goondvr/server"
 )
@@ -30,6 +33,8 @@ type Manager struct {
 
 	cfgMu         sync.Mutex // one change to the channel list or to the filename patterns at a time (pattern conflicts)
 	autoLastStart time.Time  // last automatic start (auto.go); only the presence loop touches it
+
+	closing atomic.Bool // Shutdown has saved the channel list: later saves must not overwrite it (Stop marks every channel paused)
 
 	startTime  time.Time
 	cfBlocksMu sync.Mutex
@@ -130,6 +135,13 @@ func ensureConfDir() error {
 	return nil
 }
 
+// writeConf saves a file of conf/ so that a kill never leaves it half written
+// (see persist.WriteFile) and keeps a rolling backup of the version it replaces.
+func writeConf(path string, b []byte) error {
+	persist.Backup(path, false)
+	return persist.WriteFile(path, b, 0600)
+}
+
 func ensureJSONFile(path string, defaultValue any) error {
 	if err := ensureConfDir(); err != nil {
 		return err
@@ -146,7 +158,7 @@ func ensureJSONFile(path string, defaultValue any) error {
 	}
 	b = append(b, '\n')
 
-	if err := os.WriteFile(path, b, 0600); err != nil {
+	if err := persist.WriteFile(path, b, 0600); err != nil {
 		return fmt.Errorf("write default %s: %w", path, err)
 	}
 	return nil
@@ -208,7 +220,7 @@ func SaveSettings() error {
 	if err := ensureConfDir(); err != nil {
 		return err
 	}
-	if err := os.WriteFile(settingsFile, b, 0600); err != nil {
+	if err := writeConf(settingsFile, b); err != nil {
 		return fmt.Errorf("write settings: %w", err)
 	}
 	return nil
@@ -220,14 +232,15 @@ func LoadSettings() error {
 	if err := EnsureConfigPlaceholders(); err != nil {
 		return fmt.Errorf("ensure config placeholders: %w", err)
 	}
-	b, err := os.ReadFile(settingsFile)
+	var s settings
+	note, err := persist.ReadJSON(settingsFile, &s)
 	if err != nil {
 		return fmt.Errorf("read settings: %w", err)
 	}
-	var s settings
-	if err := json.Unmarshal(b, &s); err != nil {
-		return fmt.Errorf("unmarshal settings: %w", err)
+	if note != "" {
+		log.Printf("WARN  %s", note)
 	}
+	persist.Backup(settingsFile, true) // a snapshot at every start
 	if s.Cookies != "" {
 		server.Config.Cookies = s.Cookies
 	}
@@ -461,6 +474,9 @@ func migrateLegacyPatternConflicts(config []*entity.ChannelConfig) (bool, error)
 
 // SaveConfig saves the current channels and state to a JSON file.
 func (m *Manager) SaveConfig() error {
+	if m.closing.Load() {
+		return nil // Shutdown already saved the list as the person left it
+	}
 	if server.Config != nil && server.Config.Username != "" {
 		// Single-channel CLI runs are ephemeral and should not rewrite the
 		// persisted web UI channel list.
@@ -482,7 +498,7 @@ func (m *Manager) SaveConfig() error {
 	if err := ensureConfDir(); err != nil {
 		return err
 	}
-	if err := os.WriteFile(channelsFile, b, 0600); err != nil {
+	if err := writeConf(channelsFile, b); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 	return nil
@@ -496,7 +512,7 @@ func saveChannelConfig(config []*entity.ChannelConfig) error {
 	if err := ensureConfDir(); err != nil {
 		return err
 	}
-	if err := os.WriteFile(channelsFile, b, 0600); err != nil {
+	if err := writeConf(channelsFile, b); err != nil {
 		return fmt.Errorf("write file: %w", err)
 	}
 	return nil
@@ -507,15 +523,15 @@ func (m *Manager) LoadConfig() error {
 	if err := EnsureConfigPlaceholders(); err != nil {
 		return fmt.Errorf("ensure config placeholders: %w", err)
 	}
-	b, err := os.ReadFile(channelsFile)
+	var config []*entity.ChannelConfig
+	note, err := persist.ReadJSON(channelsFile, &config)
 	if err != nil {
 		return fmt.Errorf("read file: %w", err)
 	}
-
-	var config []*entity.ChannelConfig
-	if err := json.Unmarshal(b, &config); err != nil {
-		return fmt.Errorf("unmarshal: %w", err)
+	if note != "" {
+		log.Printf("WARN  %s", note)
 	}
+	persist.Backup(channelsFile, true) // a snapshot at every start
 
 	migrated, err := migrateLegacyPatternConflicts(config)
 	if err != nil {
@@ -771,18 +787,40 @@ func (m *Manager) GetChannelLiveThumb(ctx context.Context, channelID string) str
 	return val.(*channel.Channel).FreshLiveThumbURL(ctx)
 }
 
-// Shutdown gracefully stops all active channels, saves config, and waits for
-// any recording finalization tasks to finish before returning.
+// shutdownBudget is how long Shutdown waits for the channels to close their
+// files. Windows ends the process about five seconds after the console window is
+// closed (or the session ends), so everything has to fit in less than that.
+// (A variable only so that tests can shorten it.)
+var shutdownBudget = 4 * time.Second
+
+// Shutdown closes the program in an orderly way within shutdownBudget: the
+// channel list is saved first (it is tiny and cannot be left half written), then
+// every channel stops at once, in parallel, and closes its recording. The slow
+// work that follows a recording (seek index, ffmpeg) is not started: the files
+// stay on the journal of open recordings and are finished at the next start.
 func (m *Manager) Shutdown() {
-	m.Channels.Range(func(key, value any) bool {
-		ch := value.(*channel.Channel)
-		wasPaused := ch.Paused()
-		ch.Stop()
-		ch.SetPaused(wasPaused)
+	channel.BeginShutdown()
+	_ = m.SaveConfig()
+	m.closing.Store(true)
+	persist.Backup(channelsFile, true)
+	persist.Backup(settingsFile, true)
+
+	var wg sync.WaitGroup
+	m.Channels.Range(func(_, v any) bool {
+		wg.Add(1)
+		go func(ch *channel.Channel) {
+			defer wg.Done()
+			ch.Stop()
+		}(v.(*channel.Channel))
 		return true
 	})
-	// Persist channel list so the web UI restores them on next start.
-	_ = m.SaveConfig()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(shutdownBudget):
+		log.Printf("WARN  some channels did not close within %s; exiting anyway (their recordings are repaired at the next start)", shutdownBudget)
+	}
 }
 
 // ReportCFBlock records a CF block for username and fires a global alert if
