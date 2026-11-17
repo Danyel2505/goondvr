@@ -3,6 +3,7 @@ package entity
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Event represents the type of event for the channel.
@@ -42,7 +43,20 @@ type ChannelConfig struct {
 	StreamedAt       int64  `json:"streamed_at,omitempty"`
 	// Tags the site gives the room (lower case); filled in from the list of rooms on the air.
 	Tags []string `json:"tags,omitempty"`
+
+	// Every rename of the account the site redirected to a new name, oldest first (see manager/rename.go).
+	NameHistory []NameChange `json:"name_history,omitempty"`
 }
+
+// NameChange is one rename of the account behind a channel: the site started redirecting From to To.
+type NameChange struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	At   int64  `json:"at"` // unix seconds, when the program noticed it
+}
+
+// Date is the day the rename was noticed, for the card.
+func (n NameChange) Date() string { return time.Unix(n.At, 0).Format("2006-01-02") }
 
 // DetectConfig is the image detection of one channel: pictures of the channel go to a detector (a
 // classifier or an object detector, running on this computer or on Google Colab) and what it finds
@@ -199,6 +213,7 @@ type ChannelInfo struct {
 	Settings         ChannelSettings // what the settings dialog of the card edits
 	Detect           DetectInfo      // image detection of the channel (On = false: not used)
 	AutoWaiting      bool            // auto-record is on and the channel is on the air, but it is not started: low free disk space
+	NameHistory      []NameChange    // earlier names of the account, oldest first
 	Site             string          // "chaturbate" (default) or "stripchat"
 	SiteDomain       string          // pre-computed site URL, e.g. "https://chaturbate.com/" or "https://stripchat.com/"
 }

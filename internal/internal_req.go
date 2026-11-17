@@ -124,6 +124,32 @@ func (h *Req) GetBytes(ctx context.Context, url string) ([]byte, error) {
 	return b, err
 }
 
+// RedirectLocation asks for url without following redirects and returns where the answer points
+// (an absolute address), or "" when it is not a redirect.
+func (h *Req) RedirectLocation(ctx context.Context, url string) (string, error) {
+	req, cancel, err := h.CreateRequest(ctx, url)
+	if err != nil {
+		return "", fmt.Errorf("new request: %w", err)
+	}
+	defer cancel()
+
+	c := *h.client
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := c.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("client do: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode < 300 || resp.StatusCode > 399 {
+		return "", nil
+	}
+	loc, err := resp.Location()
+	if err != nil {
+		return "", nil // a redirect without a usable address says nothing
+	}
+	return loc.String(), nil
+}
+
 // CreateRequest constructs an HTTP GET request with necessary headers.
 func (h *Req) CreateRequest(ctx context.Context, url string) (*http.Request, context.CancelFunc, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second) // timed out after 10 seconds

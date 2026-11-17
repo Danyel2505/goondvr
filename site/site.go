@@ -3,6 +3,9 @@ package site
 import (
 	"context"
 	"errors"
+	"net/url"
+	"regexp"
+	"strings"
 
 	"github.com/HeapOfChaos/goondvr/internal"
 )
@@ -84,4 +87,40 @@ type Site interface {
 	FetchStream(ctx context.Context, req *internal.Req, username string) (*StreamInfo, error)
 	// FetchLastBroadcast returns Unix timestamp of last broadcast, or 0 if unknown.
 	FetchLastBroadcast(ctx context.Context, req *internal.Req, username string) (int64, error)
+}
+
+// Renamer is implemented by sites that send the old address of a renamed account to the new one.
+type Renamer interface {
+	// ResolveRename returns the new name of the account when the site redirects the address of username
+	// to another account that exists, and "" when it does not. An error means "could not tell".
+	ResolveRename(ctx context.Context, req *internal.Req, username string) (string, error)
+}
+
+var usernameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{2,64}$`)
+
+// RenameFromRedirect asks for the page of username (pageURL) without following redirects. If the site sends it to
+// the page of a different account on the same host, and exists says that account is real, that account is the
+// new name. A redirect that only changes the case, leads elsewhere (login, age check, home page...) or leads to
+// something that is not an account is not a rename: a wrong answer here would rename a channel for good.
+func RenameFromRedirect(ctx context.Context, req *internal.Req, pageURL, username string, exists func(ctx context.Context, name string) error) (string, error) {
+	loc, err := req.RedirectLocation(ctx, pageURL)
+	if err != nil || loc == "" {
+		return "", err
+	}
+	from, err := url.Parse(pageURL)
+	if err != nil {
+		return "", err
+	}
+	to, err := from.Parse(loc) // loc may be relative
+	if err != nil || !strings.EqualFold(to.Host, from.Host) {
+		return "", nil
+	}
+	name := strings.Trim(to.Path, "/")
+	if !usernameRe.MatchString(name) || strings.EqualFold(name, username) {
+		return "", nil
+	}
+	if err := exists(ctx, name); err != nil {
+		return "", nil
+	}
+	return name, nil
 }

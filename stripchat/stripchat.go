@@ -119,6 +119,14 @@ func (s *Stripchat) FetchAvailability(ctx context.Context, req *internal.Req, us
 	return availabilityFrom(info, err)
 }
 
+// ResolveRename implements site.Renamer: stripchat.com/<old name> sends a renamed model to the new name.
+func (s *Stripchat) ResolveRename(ctx context.Context, req *internal.Req, username string) (string, error) {
+	return site.RenameFromRedirect(ctx, req, "https://stripchat.com/"+username, username, func(ctx context.Context, name string) error {
+		_, err := s.FetchAvailability(ctx, req, name)
+		return err
+	})
+}
+
 // availabilityFrom turns the answer of the cam API into an Availability:
 // offline and private rooms are "not available", anything else that failed is
 // "could not tell".

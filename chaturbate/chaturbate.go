@@ -89,6 +89,14 @@ func (cb *Chaturbate) FetchAvailability(ctx context.Context, req *internal.Req, 
 	return site.Availability{}, fmt.Errorf("chaturbate: availability answer has no room status")
 }
 
+// ResolveRename implements site.Renamer: chaturbate.com/<old name>/ sends a renamed account to its new name.
+func (cb *Chaturbate) ResolveRename(ctx context.Context, req *internal.Req, username string) (string, error) {
+	return site.RenameFromRedirect(ctx, req, server.Config.Domain+username+"/", username, func(ctx context.Context, name string) error {
+		_, err := cb.FetchAvailability(ctx, req, name)
+		return err
+	})
+}
+
 // FetchLastBroadcast implements site.Site.
 func (cb *Chaturbate) FetchLastBroadcast(ctx context.Context, req *internal.Req, username string) (int64, error) {
 	return FetchLastBroadcast(ctx, req, username)
