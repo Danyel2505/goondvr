@@ -16,6 +16,7 @@ from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C  # noqa: E402
+import prepare_detection as P  # noqa: E402
 import server as S  # noqa: E402
 import train_classifier as T  # noqa: E402
 
@@ -215,6 +216,68 @@ class Server(unittest.TestCase):
         after = self.call("/detect?model=rehecho", jpeg((10, 200, 30)))[1]["scores"]
         self.assertIn("verde", before)
         self.assertIn("amarillo", after)
+
+
+class PrepareDetectionTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.data = os.path.join(self.tmp, "ds")
+        os.makedirs(os.path.join(self.data, "images"))
+        os.makedirs(os.path.join(self.data, "labels"))
+        for i in range(10):
+            Image.new("RGB", (200, 100), (i * 20, 0, 0)).save(os.path.join(self.data, "images", f"f{i}.jpg"))
+            if i != 9:  # f9 has no label file: a picture of "nothing here"
+                with open(os.path.join(self.data, "labels", f"f{i}.txt"), "w") as f:
+                    f.write("1 0.5 0.5 0.5 0.5\n0 0.1 0.1 0.2 0.4\n\n")
+        with open(os.path.join(self.data, "classes.txt"), "w") as f:
+            f.write("a\nb\n")
+
+    def test_builds_the_coco_folder_that_yolox_reads(self):
+        out = os.path.join(self.tmp, "coco")
+        r = P.build(self.data, out, val=0.2)
+        self.assertEqual(r["without_boxes"], 1)
+        self.assertEqual(r["train"] + r["val"], 10)
+        self.assertEqual(r["val"], 2)
+        total = {"a": 0, "b": 0}
+        for split in ("train", "val"):
+            ann = json.load(open(os.path.join(out, "annotations", f"instances_{split}2017.json")))
+            self.assertEqual([c["name"] for c in ann["categories"]], ["a", "b"])
+            ids = {im["id"] for im in ann["images"]}
+            for im in ann["images"]:
+                self.assertTrue(os.path.exists(os.path.join(out, f"{split}2017", im["file_name"])))
+            for a in ann["annotations"]:
+                self.assertIn(a["image_id"], ids)
+                total["a" if a["category_id"] == 1 else "b"] += 1
+                if a["category_id"] == 2:  # "1 0.5 0.5 0.5 0.5" on a 200x100 picture: x=50 y=25 w=100 h=50
+                    self.assertEqual(a["bbox"], [50.0, 25.0, 100.0, 50.0])
+                    self.assertEqual(a["area"], 5000.0)
+        self.assertEqual(total, {"a": 9, "b": 9})
+        self.assertEqual(r["boxes"], [9, 9])
+
+    def test_a_mistake_in_a_label_file_names_the_file_and_line(self):
+        with open(os.path.join(self.data, "labels", "f3.txt"), "w") as f:
+            f.write("0 0.5 0.5 0.5 0.5\n7 0.5 0.5 0.5 0.5\n")
+        with self.assertRaises(SystemExit) as cm:
+            P.build(self.data, os.path.join(self.tmp, "coco"))
+        self.assertIn("f3.txt, línea 2", str(cm.exception))
+        with open(os.path.join(self.data, "labels", "f3.txt"), "w") as f:
+            f.write("0 50 50 100 100\n")  # pixels instead of fractions
+        with self.assertRaises(SystemExit) as cm:
+            P.build(self.data, os.path.join(self.tmp, "coco2"))
+        self.assertIn("entre 0 y 1", str(cm.exception))
+
+    def test_class_names_from_a_data_yaml_in_its_three_styles(self):
+        self.assertEqual(P.parse_yaml_names("path: x\nnames: ['a', \"b\"]\n"), ["a", "b"])
+        self.assertEqual(P.parse_yaml_names("names:\n  - a\n  - b\nnc: 2\n"), ["a", "b"])
+        self.assertEqual(P.parse_yaml_names("names:\n  0: a\n  1: b\n"), ["a", "b"])
+
+    def test_refuses_an_output_folder_that_is_not_empty(self):
+        out = os.path.join(self.tmp, "coco")
+        os.makedirs(out)
+        open(os.path.join(out, "x"), "w").close()
+        with self.assertRaises(SystemExit):
+            P.build(self.data, out)
 
 
 if __name__ == "__main__":
