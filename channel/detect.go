@@ -53,6 +53,10 @@ const (
 	maxPicture        = 4 << 20
 )
 
+// ThumbBase is where the live preview of a Chaturbate channel is (the channel name and .jpg follow);
+// tests point it at a fake.
+var ThumbBase = "https://thumb.live.mmcdn.com/riw/"
+
 var (
 	// ErrNoFrameYet: the recording has not produced anything to look at yet (not an error to report).
 	ErrNoFrameYet = errors.New("no recorded segment to look at yet")
@@ -146,7 +150,7 @@ func (ch *Channel) DetectFrame(ctx context.Context, cfg entity.DetectConfig) ([]
 		return detect.FrameFromSegments(ctx, parts...)
 	}
 
-	url := "https://thumb.live.mmcdn.com/riw/" + ch.Config.Username + ".jpg"
+	url := ThumbBase + ch.Config.Username + ".jpg"
 	req := mediaReq()
 	if _, ok := resolveSite(ch.Config.Site).(site.LiveThumbSource); ok {
 		if url = ch.FreshLiveThumbURL(ctx); url == "" {
