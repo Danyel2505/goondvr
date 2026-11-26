@@ -1,0 +1,7 @@
+# What the detector needs. start.bat / start.sh install it for you in a private environment (.venv).
+numpy>=1.24
+Pillow>=10
+onnxruntime>=1.18      # CPU. For a graphics card install ONE of these INSTEAD (the server picks the fastest by itself):
+                       #   onnxruntime-gpu         NVIDIA (needs CUDA)
+                       #   onnxruntime-directml    Windows: NVIDIA, AMD or Intel
+onnx>=1.15             # only for fetch_models.py (it cuts the base model) and for the tests
