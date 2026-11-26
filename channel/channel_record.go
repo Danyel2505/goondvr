@@ -43,7 +43,7 @@ func (ch *Channel) Monitor(runID uint64) {
 	ch.Info("starting to record `%s`", ch.Config.Username)
 
 	// Seed total disk usage in the background so the UI shows it immediately.
-	go ch.ScanTotalDiskUsage()
+	ch.scanAsync()
 
 	// Seed StreamedAt from the site API if we haven't seen this channel stream yet.
 	ch.stateMu.RLock()
@@ -89,6 +89,9 @@ func (ch *Channel) Monitor(runID uint64) {
 				ch.setAvailable(false)
 			}
 			ch.UpdateOnlineStatus(false)
+			if errors.Is(err, internal.ErrNotFound) {
+				ch.NoteNotFound() // a renamed account looks like this: manager/rename.go asks the site
+			}
 
 			// Reset CF block count whenever a non-CF response is received.
 			if !errors.Is(err, internal.ErrCloudflareBlocked) && ch.CFBlockCount > 0 {

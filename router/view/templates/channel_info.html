@@ -44,14 +44,16 @@
 {{ end }}
 {{ end }}
 
+{{ define "name_hist_title" }}{{ with .NameHistory }} title="Former names: {{ range $i, $n := . }}{{ if $i }}, {{ end }}{{ $n.From }} -> {{ $n.To }} ({{ $n.Date }}){{ end }}"{{ end }}{{ end }}
 {{ define "channel_details" }}
 {{ if eq .ViewMode "expanded" }}
 <!-- Expanded View -->
-<div class="view-expanded" data-rank="{{ .Rank }}" data-q="{{ .Username }} {{ .RoomTitle }} {{ .Site }}{{ range .Tags }} {{ . }}{{ end }}" data-tags="|{{ range .Tags }}{{ . }}|{{ end }}">
+<div class="view-expanded" data-rank="{{ .Rank }}" data-q="{{ .Username }} {{ range .NameHistory }}{{ .From }} {{ end }}{{ .RoomTitle }} {{ .Site }}{{ range .Tags }} {{ . }}{{ end }}" data-tags="|{{ range .Tags }}{{ . }}|{{ end }}">
     <!-- Header -->
     <div class="ts-grid is-middle-aligned has-top-spaced-small">
         <div class="column is-fluid">
             <div class="ts-header">{{ .Username }}</div>
+            {{ with .NameHistory }}<div class="ts-text is-description is-tiny name-hist" title="Names this account used before. The site now sends them to the current name.">Former names: {{ range $i, $n := . }}{{ if $i }} &middot; {{ end }}{{ $n.From }} &rarr; {{ $n.To }} ({{ $n.Date }}){{ end }}</div>{{ end }}
             <div class="ts-text is-description is-small">{{ if eq .Site "stripchat" }}Stripchat{{ else }}Chaturbate{{ end }}</div>
             {{ if .RoomTitle }}<div class="ts-text is-description is-small has-top-spaced-small" style="line-height:1.3">{{ .RoomTitle }}</div>{{ end }}
         </div>
@@ -160,7 +162,7 @@
     <div style="padding:0.65rem 0.75rem 0.75rem">
         <div class="ts-grid is-middle-aligned">
             <div class="column is-fluid">
-                <strong>{{ .Username }}</strong>
+                <strong{{ template "name_hist_title" . }}>{{ .Username }}</strong>
                 <div class="ts-text is-description is-small">{{ if eq .Site "stripchat" }}Stripchat{{ else }}Chaturbate{{ end }}</div>
             </div>
             <div class="column">
@@ -203,7 +205,7 @@
 <!-- Collapsed View -->
 <div class="view-collapsed">
     <div class="collapsed-name">
-        <strong>{{ .Username }}</strong>
+        <strong{{ template "name_hist_title" . }}>{{ .Username }}</strong>
         {{ if and .IsOnline (not .IsPaused) }}<span class="ts-badge is-small is-start-spaced">REC</span>
         {{ else if .IsPaused }}{{ if .IsAvailable }}<span class="ts-badge is-positive is-small is-start-spaced">LIVE</span>{{ end }}<span class="ts-badge is-negative is-small is-start-spaced">PAUSED</span>
         {{ else if .IsAvailable }}<span class="ts-badge is-positive is-small is-start-spaced">LIVE</span>

@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -60,6 +61,9 @@ func (ch *Channel) ProbeAvailability(ctx context.Context, req *internal.Req) err
 	}
 	av, err := src.FetchAvailability(ctx, req, ch.Config.Username)
 	if err != nil {
+		if errors.Is(err, internal.ErrNotFound) {
+			ch.NoteNotFound()
+		}
 		return err
 	}
 	if ch.Online() || !ch.Paused() {

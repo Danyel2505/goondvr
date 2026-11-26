@@ -55,7 +55,11 @@ type Channel struct {
 	Available bool
 	// lastProbe is when the availability of a paused channel was last asked
 	// for (unix nanoseconds, 0 = never).
-	lastProbe           atomic.Int64
+	lastProbe atomic.Int64
+	// lastRename is when the site was last asked whether the account was renamed (unix nanoseconds, 0 = never)
+	// and notFound is set when the site answered "404" for the name: see rename.go.
+	lastRename          atomic.Int64
+	notFound            atomic.Bool
 	StreamedAt          int64
 	Duration            float64 // Seconds
 	Filesize            int     // Bytes
@@ -333,6 +337,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		SummaryCardImage: summaryCard,
 		LiveThumbURL:     liveThumb,
 		Tags:             tags,
+		NameHistory:      ch.Config.NameHistory, // set when the channel is created, never edited
 		Settings:         set,
 		Detect:           ch.detectInfo(set.Detect),
 		AutoWaiting:      autoWaiting,

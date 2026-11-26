@@ -34,7 +34,7 @@ type Manager struct {
 	cfgMu         sync.Mutex         // one change to the channel list or to the filename patterns at a time (pattern conflicts)
 	autoMu        sync.Mutex         // autoStep runs from the presence loop and from the detection workers
 	autoLastStart time.Time          // last automatic start (auto.go), guarded by autoMu
-	detectStop    context.CancelFunc // stops the image detection engine (detect.go)
+	detectStop    context.CancelFunc // stops the image detection (detect.go) and rename (rename.go) engines
 
 	closing atomic.Bool // Shutdown has saved the channel list: later saves must not overwrite it (Stop marks every channel paused)
 
@@ -66,6 +66,7 @@ func New() (*Manager, error) {
 	var detectCtx context.Context
 	detectCtx, m.detectStop = context.WithCancel(context.Background())
 	go m.detectLoop(detectCtx)
+	go m.renameLoop(detectCtx) // (same context: Shutdown stops both)
 
 	// Keep-alive for the SSE connections. It is an SSE *comment*: browsers ignore
 	// it, but dead connections are noticed and proxies keep the stream open. (It
