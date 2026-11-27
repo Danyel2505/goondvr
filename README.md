@@ -11,6 +11,9 @@ Features added in this version include:
 - Live stream thumbnails for streaming channels and previews for offline channels
 - Stripchat support
 - Discord webhook and `ntfy` notifications
+- Renamed accounts are detected (the old page redirects), applied, and the channel shows its history of former names
+- Image detection with your own trained model, locally or on Google Colab: record only while something matches and/or cut clips (see [docs/GUIA_DETECCION.md](docs/GUIA_DETECCION.md), in Spanish)
+- Crash-safe recordings: finished on console close, atomic config writes, automatic backups of the settings and channels
 
 Example dashboard and settings views from the current web UI.
 
