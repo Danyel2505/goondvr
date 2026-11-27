@@ -221,9 +221,15 @@ Sin tarjeta gráfica no pierdes nada: el modelo base y YOLOX-Nano están pensado
 
 ## Qué se probó y qué no
 
-Probado con pruebas automáticas: el servidor del detector (clasificador y decodificación de YOLOX, token, límites),
-`prepare_detection.py`, el entrenador del clasificador, el motor de detección de GoondVR (compuerta, tramos, ajustes)
-y `start.sh` de principio a fin en Linux.
-**No probado** (no se pudo en el entorno donde se escribió): `start.bat` en Windows, el uso de tarjeta gráfica
-(DirectML/CUDA), y **los dos cuadernos de Colab** (no hay Colab ni GPU allí; solo se comprobó que su código es sintácticamente
-válido). Si algo falla en uno de ellos, el error indica la celda; no sigas con las siguientes.
+**Probado:** el servidor del detector (clasificador y decodificación de YOLOX, token, límites), `prepare_detection.py`,
+el entrenador del clasificador, el motor de detección de GoondVR (compuerta, tramos, ajustes) y `start.sh` de principio a
+fin en Linux. Además, la cadena de cajas se probó **en CPU con PyTorch 2.15 y YOLOX 0.3.0**, con un conjunto
+sintético: conversión con `prepare_detection.py` → la plantilla `Exp` del cuaderno → pesos preentrenados → cargador de
+datos real de YOLOX (con mosaico) → 150 pasos de entrenamiento → exportación a ONNX con el código de la celda 5 → el
+decodificador del detector. La forma de la salida fue la esperada y las cajas cayeron en su sitio (IoU medio 0,73 con
+solo 150 pasos). Eso demuestra que **los formatos encajan**; no mide la calidad de un modelo real.
+
+**No probado** (no se pudo donde se escribió): `tools/train.py` de YOLOX (exige GPU CUDA), los dos cuadernos **dentro de
+Colab** (solo se comprobó que su código es válido y que las partes que no dependen de Colab funcionan), `start.bat` en
+Windows y el uso de tarjeta gráfica (DirectML/CUDA). Si algo falla en un cuaderno, el error indica la celda; no sigas
+con las siguientes.
