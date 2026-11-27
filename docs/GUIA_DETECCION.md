@@ -20,6 +20,11 @@ Un canal sin detección no gasta nada.
 
 Empieza por el **clasificador**: es lo más rápido y lo más ligero. Pasa a cajas solo si el clasificador no basta.
 
+**¿Quieres probar todo ya, sin entrenar nada?** El detector descarga junto con el modelo base `yolox_nano_coco`
+(Apache-2.0), un detector de cajas ya hecho para 80 cosas cotidianas con los nombres de COCO, en inglés: `person`,
+`cup`, `laptop`, `cell phone`, `bottle`, `tv`, `book`… Pon en el canal Model = `yolox_nano_coco` y, en «It counts when
+it finds», por ejemplo `person`. (En una foto de prueba con una persona respondió `person` 93 %, en unos 20 ms de CPU.)
+
 ## 2. Instalar el detector en tu PC
 
 Necesitas **Python 3.9 - 3.12** (python.org; en Windows marca «Add Python to PATH»). Después:
@@ -199,9 +204,12 @@ Sin tarjeta gráfica no pierdes nada: el modelo base y YOLOX-Nano están pensado
   detiene** pasado el tiempo de «without a match» (no hay coincidencias que mantengan abierta la compuerta). Los
   fallos de conexión se reintentan con esperas cada vez más largas. Si prefieres que grabe siempre, no actives esa casilla.
 - «Record only while it matches» **necesita «The preview picture»**: con «The recording» no hay grabación de la que sacar la imagen cuando está parado.
-- Los tramos y los clips son **aproximados**: unos segundos de margen en cada extremo (el intervalo de comprobación más
-  la duración de un trozo de vídeo). Los clips se cortan **sin recodificar**, así que empiezan en el fotograma clave
-  anterior: pueden perder hasta ~2 s al principio.
+- Los tramos y los clips son **aproximados**: el programa solo mira una imagen cada «Check every» segundos y, con
+  «The recording», solo el último fotograma clave (que está al principio del último trozo de vídeo). En una prueba con
+  un directo simulado (objeto en pantalla de 12 s a 26 s, mirando cada 2 s) el tramo salió de 14 s a 26 s: el principio
+  se marca algo tarde, hasta del orden de «Check every» más lo que dure un trozo de vídeo. Por eso existen los márgenes
+  «antes» y «después» de los clips (por defecto 5 y 10 s): **súbelos si te pierdes el principio**. Los clips se cortan
+  **sin recodificar**, así que empiezan en el fotograma clave anterior: pueden perder hasta ~2 s al principio.
 - Si cierras GoondVR **justo mientras corta un clip**, ese clip puede quedarse sin hacer (la grabación y la lista de
   tramos `.detect.json` sí quedan guardadas).
 - Un modelo es tan bueno como sus imágenes: pocas imágenes de un solo canal = un modelo que solo funciona en ese canal.
@@ -218,6 +226,38 @@ Sin tarjeta gráfica no pierdes nada: el modelo base y YOLOX-Nano están pensado
 | No detecta lo que debería | baja «With at least»; añade más imágenes de esos casos, de más canales |
 | Los clips no aparecen | ¿está `ffmpeg` en el PATH? Mira el registro del canal: dice por qué falló |
 | Colab: «No hay GPU» | *Entorno de ejecución → Cambiar tipo de entorno → GPU (T4)*; la cuota gratuita de GPU a veces se agota: prueba más tarde |
+
+## 11. Comprobar que funciona en tu equipo (10 minutos)
+
+Hay tres cosas que no pude probar donde se escribió esto: Windows, la tarjeta gráfica y Colab. Si estas comprobaciones
+salen como se indica, quedan verificadas; si no, copia el texto del error o las últimas líneas de la ventana y el fallo
+se puede corregir con eso.
+
+**A. `start.bat` en Windows**
+
+1. Doble clic en `detector\start.bat` (la primera vez tarda unos minutos).
+2. Al final debe quedar una ventana abierta con líneas como estas:
+   `detector on http://127.0.0.1:8099  models: ['yolox_nano_coco']` y
+   `model 'yolox_nano_coco' (yolox) loaded in 0.2s on CPUExecutionProvider {…}`.
+3. `http://127.0.0.1:8099/health` en el navegador → `{"ok": true}`.
+4. GoondVR → Ajustes → Image detection → **Test connection** → «Connected. Models: yolox_nano_coco (yolox, …)».
+
+**B. Tarjeta gráfica**
+
+La línea `model '…' loaded in … on <X> {…}` del paso A dice dónde corre cada modelo; si hay tarjeta, al final lleva los tiempos que midió en cada candidato (y un `error` si alguna no funcionó), y si no hay ninguna, sale `{}`:
+`CPUExecutionProvider` = procesador; `DmlExecutionProvider` = tarjeta en Windows (DirectML); `CUDAExecutionProvider` = NVIDIA.
+Es normal que con una tarjeta salga igualmente `CPUExecutionProvider`: con `--device auto` solo usa la tarjeta si da los
+mismos resultados y es un 20 % más rápida, y para modelos tan pequeños a menudo no lo es. Para ver si la tarjeta funciona,
+abre `start.bat --device gpu`: si no hay ninguna utilizable, no se detiene: usa la CPU (el final de la línea sale `{}` o con el `error` de la tarjeta).
+
+**C. Colab**
+
+- `train_detector.ipynb`: la celda 2 imprime `GPU: …` (si no, activa la GPU); la celda 3, cuántas imágenes y cajas
+  tiene cada clase; la celda 4, el progreso («epoch: 1/100, iter: …»); la celda 5, `usando …/best_ckpt.pth` y cuántas imágenes
+  de validación salen bien; la celda 6 descarga el `.zip`. Prueba primero con **pocas épocas** (por ejemplo 5) para
+  ver que todo encaja antes de dejar horas entrenando.
+- `detector_server.ipynb`: la celda 4 imprime «Dirección», «Token» y «Comprobación: True». Pégalos en GoondVR y pulsa
+  **Test connection**.
 
 ## Qué se probó y qué no
 
