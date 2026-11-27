@@ -130,6 +130,13 @@ func (m *Manager) DetectModels(ctx context.Context, o *server.DetectSettings) se
 		cfg.DetectLocalURL, cfg.DetectColabURL, cfg.DetectToken = o.LocalURL, o.ColabURL, o.Token
 	}
 	resp := server.DetectModelsResponse{Backend: cfg.DetectBackend, Models: []detect.ModelInfo{}}
+	// the same rule as when saving: a Colab address without https would send the token in the clear
+	if cfg.DetectBackend == "colab" {
+		if err := ValidateDetectURL(cfg.DetectColabURL, true); err != nil {
+			resp.Error = err.Error()
+			return resp
+		}
+	}
 	models, err := detect.Models(ctx, detectTarget(&cfg))
 	if err != nil {
 		resp.Error = err.Error()

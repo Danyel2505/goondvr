@@ -86,6 +86,23 @@ func TestDetectTargetPicksTheBackend(t *testing.T) {
 	}
 }
 
+func TestDetectModelsDoesNotSendTheTokenToAColabAddressWithoutHTTPS(t *testing.T) {
+	hits := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	defer ts.Close()
+	old := server.Config
+	server.Config = &entity.Config{}
+	defer func() { server.Config = old }()
+
+	resp := (&Manager{}).DetectModels(context.Background(), &server.DetectSettings{Backend: "colab", ColabURL: ts.URL, Token: "secret"})
+	if resp.OK || !strings.Contains(resp.Error, "https") {
+		t.Fatalf("a plain http Colab address was accepted: %+v", resp)
+	}
+	if hits != 0 {
+		t.Fatalf("the detector was asked %d time(s) over plain http", hits)
+	}
+}
+
 func matchOf(label string) *detect.Result {
 	return &detect.Result{Scores: map[string]float64{label: 0.9}}
 }
