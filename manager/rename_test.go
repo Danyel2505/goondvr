@@ -36,7 +36,16 @@ func renameRig(t *testing.T, to map[string]string, cfgs ...*entity.ChannelConfig
 	oldFor, oldNow := renamerFor, renameNow
 	renamerFor = func(string) (site.Renamer, bool) { return fr, true }
 	renameNow = func() time.Time { return time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { renamerFor, renameNow = oldFor, oldNow })
+	t.Cleanup(func() {
+		renamerFor, renameNow = oldFor, oldNow
+		// a renamed channel is no longer in m.Channels, so the rig's own cleanup never waits for it: without this its
+		// last goroutines can still read server.Config when the next test rewrites it
+		for _, c := range ch {
+			c.Stop()
+			c.WaitPublisherExit()
+			c.WaitBackground()
+		}
+	})
 	return m, ch, fr
 }
 
