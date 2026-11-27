@@ -322,7 +322,7 @@ func (ch *Channel) handleSegmentForMonitor(runID uint64, b []byte, duration floa
 
 	ch.Filesize += n
 	ch.Duration += duration
-	ch.detectKeep(b)
+	ch.detectKeep(b, ch.Duration-duration)
 	formattedDuration := internal.FormatDuration(ch.Duration)
 	formattedFilesize := internal.FormatFilesize(ch.Filesize)
 	shouldSwitch := ch.shouldSwitchFileLocked()

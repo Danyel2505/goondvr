@@ -216,25 +216,29 @@ func TestDetectDoneBacksOffOnErrorsAndRecovers(t *testing.T) {
 
 func TestDetectKeepsOnlyTheNewestSegmentsAndOnlyWhenAsked(t *testing.T) {
 	ch := detectChannel(t, nil)
-	ch.detectKeep([]byte("ignored"))
-	if len(ch.detectSegments()) != 0 {
+	n := func() int { s, _ := ch.detectSegments(); return len(s) }
+	ch.detectKeep([]byte("ignored"), 0)
+	if n() != 0 {
 		t.Fatal("kept a segment nobody asked for")
 	}
 	ch.detectReset(true)
 	for i := 0; i < 20; i++ {
-		ch.detectKeep([]byte{byte(i)})
+		ch.detectKeep([]byte{byte(i)}, float64(i*2))
 	}
-	segs := ch.detectSegments()
+	segs, keyAt := ch.detectSegments()
 	if len(segs) != detectMaxSegs || segs[len(segs)-1][0] != 19 {
 		t.Fatalf("kept %d segments, the last is %v", len(segs), segs[len(segs)-1])
 	}
+	if keyAt != 38 { // the newest segment starts at 38 s: that is where the key frame that gets looked at is
+		t.Fatalf("the newest segment starts at %v, want 38", keyAt)
+	}
 	big := make([]byte, detectMaxSegBytes)
-	ch.detectKeep(big)
-	if n := len(ch.detectSegments()); n != 1 {
-		t.Fatalf("a segment over the byte cap must push the others out, %d kept", n)
+	ch.detectKeep(big, 40)
+	if n() != 1 {
+		t.Fatalf("a segment over the byte cap must push the others out, %d kept", n())
 	}
 	ch.detectReset(false)
-	if len(ch.detectSegments()) != 0 {
+	if s, at := ch.detectSegments(); len(s) != 0 || at != 0 {
 		t.Fatal("turning the stream source off must free the segments")
 	}
 }

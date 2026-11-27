@@ -40,7 +40,8 @@ type detectState struct {
 	label     string
 	lastMatch time.Time
 
-	frameAt  float64       // length of the recording when the picture being checked was taken
+	frameAt  float64       // where in the recording the picture being checked is
+	keyAt    float64       // where in the recording the newest kept segment starts (its key frame is there)
 	spans    []detect.Span // matches in the file being written
 	open     bool          // the last span is still growing
 	segs     [][]byte      // newest segments of the stream, never modified once stored
@@ -134,7 +135,7 @@ func (ch *Channel) DetectRelease() {
 
 // DetectFrame gets the picture to check: the preview picture of the channel, or a frame of what is being recorded.
 func (ch *Channel) DetectFrame(ctx context.Context, cfg entity.DetectConfig) ([]byte, error) {
-	// the answer comes back later (download, ffmpeg, detector): the span must start where the picture was taken
+	// the answer comes back later (download, ffmpeg, detector): the span must start where the picture is, not where the recording is by then
 	ch.fileMu.RLock()
 	at := ch.Duration
 	ch.fileMu.RUnlock()
@@ -145,10 +146,14 @@ func (ch *Channel) DetectFrame(ctx context.Context, cfg entity.DetectConfig) ([]
 		ch.fileMu.RLock()
 		ext, init := ch.FileExt, append([]byte(nil), ch.mp4InitSegment...)
 		ch.fileMu.RUnlock()
-		parts := ch.detectSegments()
+		parts, keyAt := ch.detectSegments()
 		if len(parts) == 0 {
 			return nil, ErrNoFrameYet
 		}
+		// only the newest key frame is looked at, and in HLS it is at the start of the newest segment
+		ch.det.mu.Lock()
+		ch.det.frameAt = keyAt
+		ch.det.mu.Unlock()
 		if ext == ".mp4" {
 			if len(init) == 0 {
 				return nil, ErrNoFrameYet
@@ -252,14 +257,14 @@ func (ch *Channel) detectReset(wantSegs bool) {
 	d := &ch.det
 	d.nextAt, d.fails, d.err, d.matching, d.label, d.lastMatch, d.open = time.Time{}, 0, "", false, "", time.Time{}, false
 	if !wantSegs {
-		d.segs, d.segBytes = nil, 0
+		d.segs, d.segBytes, d.keyAt = nil, 0, 0
 	}
 	ch.det.mu.Unlock()
 	ch.det.wantSegs.Store(wantSegs)
 }
 
 // detectKeep remembers a segment that was just recorded, if the channel's detection looks at the recording.
-func (ch *Channel) detectKeep(b []byte) {
+func (ch *Channel) detectKeep(b []byte, startAt float64) {
 	if !ch.det.wantSegs.Load() {
 		return
 	}
@@ -267,6 +272,7 @@ func (ch *Channel) detectKeep(b []byte) {
 	ch.det.mu.Lock()
 	d := &ch.det
 	d.segs = append(d.segs, cp)
+	d.keyAt = startAt
 	d.segBytes += len(cp)
 	for len(d.segs) > detectMaxSegs || (d.segBytes > detectMaxSegBytes && len(d.segs) > 1) {
 		d.segBytes -= len(d.segs[0])
@@ -275,15 +281,16 @@ func (ch *Channel) detectKeep(b []byte) {
 	ch.det.mu.Unlock()
 }
 
-func (ch *Channel) detectSegments() [][]byte {
+// detectSegments returns the kept segments and where the newest one starts in the recording.
+func (ch *Channel) detectSegments() ([][]byte, float64) {
 	ch.det.mu.Lock()
 	defer ch.det.mu.Unlock()
-	return append([][]byte(nil), ch.det.segs...)
+	return append([][]byte(nil), ch.det.segs...), ch.det.keyAt
 }
 
 func (ch *Channel) detectClearSegments() {
 	ch.det.mu.Lock()
-	ch.det.segs, ch.det.segBytes = nil, 0
+	ch.det.segs, ch.det.segBytes, ch.det.keyAt = nil, 0, 0
 	ch.det.mu.Unlock()
 }
 
