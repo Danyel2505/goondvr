@@ -40,6 +40,7 @@ type detectState struct {
 	label     string
 	lastMatch time.Time
 
+	frameAt  float64       // length of the recording when the picture being checked was taken
 	spans    []detect.Span // matches in the file being written
 	open     bool          // the last span is still growing
 	segs     [][]byte      // newest segments of the stream, never modified once stored
@@ -133,6 +134,13 @@ func (ch *Channel) DetectRelease() {
 
 // DetectFrame gets the picture to check: the preview picture of the channel, or a frame of what is being recorded.
 func (ch *Channel) DetectFrame(ctx context.Context, cfg entity.DetectConfig) ([]byte, error) {
+	// the answer comes back later (download, ffmpeg, detector): the span must start where the picture was taken
+	ch.fileMu.RLock()
+	at := ch.Duration
+	ch.fileMu.RUnlock()
+	ch.det.mu.Lock()
+	ch.det.frameAt = at
+	ch.det.mu.Unlock()
 	if cfg.Source == "stream" {
 		ch.fileMu.RLock()
 		ext, init := ch.FileExt, append([]byte(nil), ch.mp4InitSegment...)
@@ -207,14 +215,18 @@ func (ch *Channel) DetectDone(cfg entity.DetectConfig, res *detect.Result, err e
 	if ok {
 		d.lastMatch = now
 		if hasFile {
+			at := d.frameAt
+			if at <= 0 || at > dur { // unknown, or the file changed while the picture was being checked
+				at = dur
+			}
 			if n := len(d.spans); d.open && n > 0 {
 				s := &d.spans[n-1]
-				s.End = dur
+				s.End = at
 				if score > s.Score {
 					s.Score, s.Label = score, label
 				}
 			} else {
-				d.spans = append(d.spans, detect.Span{Start: dur, End: dur, Label: label, Score: score})
+				d.spans = append(d.spans, detect.Span{Start: at, End: at, Label: label, Score: score})
 				d.open = true
 			}
 		}

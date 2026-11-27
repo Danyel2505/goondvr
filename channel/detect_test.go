@@ -118,6 +118,73 @@ func TestDetectDoneKeepsTheMatchesAsSpansOfTheFile(t *testing.T) {
 	}
 }
 
+func TestDetectSpanStartsWhereThePictureWasTakenNotWhenTheAnswerArrives(t *testing.T) {
+	jpg := []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(jpg) }))
+	defer srv.Close()
+	old := ThumbBase
+	ThumbBase = srv.URL + "/"
+	defer func() { ThumbBase = old }()
+
+	ch := detectChannel(t, &entity.DetectConfig{Enabled: true, Model: "m", Labels: []string{"show"}, MinScore: 0.5})
+	cfg := ch.DetectConfig()
+	f, err := os.Create(filepath.Join(t.TempDir(), "rec.ts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	setDuration := func(d float64) {
+		ch.fileMu.Lock()
+		ch.Duration, ch.File = d, f
+		ch.fileMu.Unlock()
+	}
+	check := func(takenAt, answeredAt float64, match bool) {
+		t.Helper()
+		setDuration(takenAt)
+		ch.det.mu.Lock()
+		ch.det.busy = true
+		ch.det.mu.Unlock()
+		if _, err := ch.DetectFrame(context.Background(), cfg); err != nil {
+			t.Fatal(err)
+		}
+		setDuration(answeredAt) // the recording went on while the detector thought
+		res := hit("show", 0.9)
+		if !match {
+			res = hit("other", 0.9)
+		}
+		ch.DetectDone(cfg, res, nil)
+	}
+	spansNow := func() []detect.Span {
+		ch.det.mu.Lock()
+		defer ch.det.mu.Unlock()
+		return append([]detect.Span(nil), ch.det.spans...)
+	}
+	check(10, 14, true)
+	check(12, 16, true)
+	check(14, 18, false)
+	check(30, 33, true)
+	if sp := spansNow(); len(sp) != 2 || sp[0].Start != 10 || sp[0].End != 12 || sp[1].Start != 30 || sp[1].End != 30 {
+		t.Fatalf("spans = %+v", sp)
+	}
+
+	// the recording moved to a new file while a picture was being checked: a position of the old file means nothing
+	setDuration(50)
+	ch.det.mu.Lock()
+	ch.det.busy = true
+	ch.det.mu.Unlock()
+	if _, err := ch.DetectFrame(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	ch.fileMu.Lock()
+	ch.detectFileOpened() // the match goes on into the new file, which starts at 0
+	ch.Duration = 3
+	ch.fileMu.Unlock()
+	ch.DetectDone(cfg, hit("show", 0.9), nil)
+	if sp := spansNow(); len(sp) != 1 || sp[0].Start != 0 || sp[0].End != 3 {
+		t.Fatalf("spans of the new file = %+v", sp)
+	}
+}
+
 func TestDetectDoneBacksOffOnErrorsAndRecovers(t *testing.T) {
 	ch := detectChannel(t, &entity.DetectConfig{Enabled: true, Model: "m", Interval: 10})
 	cfg := ch.DetectConfig()
