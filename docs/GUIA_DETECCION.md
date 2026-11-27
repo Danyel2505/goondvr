@@ -261,15 +261,23 @@ abre `start.bat --device gpu`: si no hay ninguna utilizable, no se detiene: usa 
 
 ## Qué se probó y qué no
 
-**Probado:** el servidor del detector (clasificador y decodificación de YOLOX, token, límites), `prepare_detection.py`,
-el entrenador del clasificador, el motor de detección de GoondVR (compuerta, tramos, ajustes) y `start.sh` de principio a
-fin en Linux. Además, la cadena de cajas se probó **en CPU con PyTorch 2.15 y YOLOX 0.3.0**, con un conjunto
-sintético: conversión con `prepare_detection.py` → la plantilla `Exp` del cuaderno → pesos preentrenados → cargador de
-datos real de YOLOX (con mosaico) → 150 pasos de entrenamiento → exportación a ONNX con el código de la celda 5 → el
-decodificador del detector. La forma de la salida fue la esperada y las cajas cayeron en su sitio (IoU medio 0,73 con
-solo 150 pasos). Eso demuestra que **los formatos encajan**; no mide la calidad de un modelo real.
+**Probado:**
+
+- El servidor del detector (clasificador y decodificación de YOLOX, token, límites), `prepare_detection.py`, el entrenador
+  del clasificador, el motor de detección de GoondVR (compuerta, tramos, ajustes) y `start.sh` de principio a fin en Linux.
+- **El programa real contra el detector real:** «Test connection» y las llamadas del cliente con un clasificador entrenado,
+  un modelo de cajas y el modelo COCO listo (en una foto con una persona respondió `person` 93 %); también los errores
+  (token malo, modelo inexistente, imagen rota).
+- **Una grabación de punta a punta** con el programa real: un directo simulado de 40 s (HLS en tiempo real, con un objeto
+  en pantalla de 12 s a 26 s), el detector real mirando la grabación cada 2 s, y ffmpeg real cortando. Salió un tramo de
+  14 s a 26 s, la grabación quedó idéntica byte a byte a los segmentos de origen y el clip de 16,5 s contiene el objeto
+  de principio a fin.
+- **La cadena de cajas** en CPU con PyTorch 2.15 y YOLOX 0.3.0, con un conjunto sintético: `prepare_detection.py` → la
+  plantilla `Exp` del cuaderno → pesos preentrenados → cargador de datos real de YOLOX (con mosaico) → 150 pasos de
+  entrenamiento → exportación a ONNX con el código de la celda 5 → el decodificador del detector (IoU medio 0,73 con solo
+  150 pasos). Demuestra que **los formatos encajan**; no mide la calidad de un modelo real.
 
 **No probado** (no se pudo donde se escribió): `tools/train.py` de YOLOX (exige GPU CUDA), los dos cuadernos **dentro de
 Colab** (solo se comprobó que su código es válido y que las partes que no dependen de Colab funcionan), `start.bat` en
-Windows y el uso de tarjeta gráfica (DirectML/CUDA). Si algo falla en un cuaderno, el error indica la celda; no sigas
-con las siguientes.
+Windows y el uso de tarjeta gráfica (DirectML/CUDA). La sección 11 tiene los pasos para comprobarlo en tu equipo. Si algo
+falla en un cuaderno, el error indica la celda; no sigas con las siguientes.
