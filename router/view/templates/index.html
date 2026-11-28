@@ -71,6 +71,12 @@
             .collapsed-stat { flex-shrink: 0; white-space: nowrap; }
             .collapsed-actions { flex-shrink: 0; display: flex; gap: 0.4rem; }
 
+            /* Tabs of the settings dialogs: one category at a time, all fields still in the same form */
+            .settings-tabs { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.75rem 1rem 0; }
+            .settings-tab.is-active { background: var(--ts-gray-800) !important; color: var(--ts-white) !important; }
+            .settings-pane[hidden] { display: none; }
+            .settings-pane > .ts-control:first-child { margin-top: 0 !important; }
+
             /* Page: the list in the middle, search and filters on the right */
             #page { display: flex; justify-content: center; align-items: flex-start; gap: 1.25rem; padding: 0 0.5rem; }
             #main-col { flex: 0 1 990px; min-width: 0; }
@@ -325,7 +331,16 @@
 
                     <div class="ts-divider"></div>
 
+                    <div class="settings-tabs" role="tablist" aria-label="Settings categories" data-tabs="settings">
+                        <button type="button" role="tab" class="ts-button is-small is-outlined is-secondary settings-tab is-active" data-tab="connection" aria-controls="sp-connection" aria-selected="true">Connection</button>
+                        <button type="button" role="tab" class="ts-button is-small is-outlined is-secondary settings-tab" data-tab="channels" aria-controls="sp-channels" aria-selected="false" tabindex="-1">Channels</button>
+                        <button type="button" role="tab" class="ts-button is-small is-outlined is-secondary settings-tab" data-tab="detection" aria-controls="sp-detection" aria-selected="false" tabindex="-1">Image detection</button>
+                        <button type="button" role="tab" class="ts-button is-small is-outlined is-secondary settings-tab" data-tab="files" aria-controls="sp-files" aria-selected="false" tabindex="-1">Files</button>
+                        <button type="button" role="tab" class="ts-button is-small is-outlined is-secondary settings-tab" data-tab="notifications" aria-controls="sp-notifications" aria-selected="false" tabindex="-1">Notifications</button>
+                    </div>
+
                     <div class="ts-content is-vertically-padded">
+                        <div class="settings-pane" role="tabpanel" id="sp-connection" data-pane="connection">
                         <!-- Browser Import -->
                         <div class="ts-control is-wide">
                             <div class="label">Browser Import</div>
@@ -427,7 +442,9 @@
                             </div>
                         </div>
                         <!-- / Browser Fetch -->
+                        </div>
 
+                        <div class="settings-pane" role="tabpanel" id="sp-channels" data-pane="channels" hidden>
                         <!-- Detection of the channels on the air -->
                         <div class="ts-control is-wide has-top-spaced-large">
                             <div class="label">On-air detection</div>
@@ -532,7 +549,9 @@
                             </div>
                         </div>
                         <!-- / Automatic recording -->
+                        </div>
 
+                        <div class="settings-pane" role="tabpanel" id="sp-detection" data-pane="detection" hidden>
                         <!-- Image detection -->
                         <div class="ts-control is-wide has-top-spaced-large">
                             <div class="label">Image detection</div>
@@ -572,7 +591,9 @@
                             </div>
                         </div>
                         <!-- / Image detection -->
+                        </div>
 
+                        <div class="settings-pane" role="tabpanel" id="sp-files" data-pane="files" hidden>
                         <!-- Completed Directory -->
                         <div class="ts-control is-wide has-top-spaced-large">
                             <div class="label">Completed Directory</div>
@@ -644,12 +665,9 @@
                             </div>
                         </div>
                         <!-- / FFmpeg Finalization -->
+                        </div>
 
-                        <div class="ts-divider has-vertically-spaced-large"></div>
-
-                        <!-- Notifications header -->
-                        <div class="ts-header is-small has-bottom-spaced">Notifications</div>
-
+                        <div class="settings-pane" role="tabpanel" id="sp-notifications" data-pane="notifications" hidden>
                         <!-- ntfy -->
                         <div class="ts-control is-wide">
                             <div class="label">ntfy Server URL</div>
@@ -747,6 +765,7 @@
                             </div>
                         </div>
                         <!-- / Stream Online Toggle -->
+                        </div>
                     </div>
 
                     <div class="ts-divider"></div>
@@ -929,7 +948,14 @@
 
                     <div class="ts-divider"></div>
 
+                    <div class="settings-tabs" role="tablist" aria-label="Channel settings categories" data-tabs="channel">
+                        <button type="button" role="tab" class="ts-button is-small is-outlined is-secondary settings-tab is-active" data-tab="recording" aria-controls="cp-recording" aria-selected="true">Recording</button>
+                        <button type="button" role="tab" class="ts-button is-small is-outlined is-secondary settings-tab" data-tab="auto" aria-controls="cp-auto" aria-selected="false" tabindex="-1">Automatic</button>
+                        <button type="button" role="tab" class="ts-button is-small is-outlined is-secondary settings-tab" data-tab="detection" aria-controls="cp-detection" aria-selected="false" tabindex="-1">Image detection</button>
+                    </div>
+
                     <div class="ts-content is-vertically-padded">
+                        <div class="settings-pane" role="tabpanel" id="cp-recording" data-pane="recording">
                         <div class="ts-control is-wide">
                             <div class="label">Resolution</div>
                             <div class="content">
@@ -990,9 +1016,8 @@
                                 </div>
                             </div>
                         </div>
-
-                        <div class="ts-divider has-vertically-spaced-large"></div>
-
+                        </div>
+                        <div class="settings-pane" role="tabpanel" id="cp-auto" data-pane="auto" hidden>
                         <div class="ts-control is-wide">
                             <div class="label">Automatic recording</div>
                             <div class="content">
@@ -1008,8 +1033,8 @@
                                 <div class="ts-text is-description has-top-spaced-small">The limit is the same for every channel (Settings &rarr; Automatic recording).</div>
                             </div>
                         </div>
-                        <div class="ts-divider has-vertically-spaced-large"></div>
-
+                        </div>
+                        <div class="settings-pane" role="tabpanel" id="cp-detection" data-pane="detection" hidden>
                         <div class="ts-control is-wide">
                             <div class="label">Image detection</div>
                             <div class="content">
@@ -1086,6 +1111,7 @@
                                     <div class="ts-text is-description has-top-spaced-small">The clips are copies cut from the recording (no re-encoding, so they start at the nearest key frame) saved next to it. The list of matches is saved as <code>.detect.json</code>.</div>
                                 </div>
                             </div>
+                        </div>
                         </div>
                         <div id="cd-error" role="alert"></div>
                     </div>
@@ -2032,6 +2058,42 @@
                 g.textContent = mark;
                 setTimeout(function () { if (g.isConnected) g.textContent = before; }, 1300);
             }
+
+            // Tabs of the settings dialogs. Every pane stays inside its form, so one Save sends all the fields;
+            // only the pane of the chosen category is shown. The last tab used is remembered.
+            document.querySelectorAll('.settings-tabs').forEach(function (bar) {
+                const form = bar.closest('form');
+                const tabs = Array.from(bar.querySelectorAll('[data-tab]'));
+                function show(name, focus) {
+                    tabs.forEach(function (b) {
+                        const on = b.dataset.tab === name;
+                        b.classList.toggle('is-active', on);
+                        b.setAttribute('aria-selected', on ? 'true' : 'false');
+                        b.tabIndex = on ? 0 : -1;
+                        if (on && focus) b.focus();
+                    });
+                    form.querySelectorAll('.settings-pane').forEach(function (p) { p.hidden = p.dataset.pane !== name; });
+                    try { localStorage.setItem('tab:' + bar.dataset.tabs, name); } catch (e) { /* private window: not remembered */ }
+                }
+                bar.addEventListener('click', function (e) {
+                    const b = e.target.closest('[data-tab]');
+                    if (b) show(b.dataset.tab);
+                });
+                bar.addEventListener('keydown', function (e) {
+                    const i = tabs.findIndex(function (b) { return b.classList.contains('is-active'); });
+                    const to = e.key === 'ArrowRight' ? (i + 1) % tabs.length : e.key === 'ArrowLeft' ? (i + tabs.length - 1) % tabs.length
+                        : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+                    if (to >= 0) { e.preventDefault(); show(tabs[to].dataset.tab, true); }
+                });
+                // a field that fails its check inside a hidden pane cannot be focused by the browser: show its pane first
+                form.addEventListener('invalid', function (e) {
+                    const p = e.target.closest && e.target.closest('.settings-pane');
+                    if (p && p.hidden) show(p.dataset.pane);
+                }, true);
+                let saved = null;
+                try { saved = localStorage.getItem('tab:' + bar.dataset.tabs); } catch (e) { /* not available */ }
+                if (saved && tabs.some(function (b) { return b.dataset.tab === saved; })) show(saved);
+            });
 
             const channelDialog = document.getElementById('channel-dialog');
             const channelForm = document.getElementById('channel-form');
