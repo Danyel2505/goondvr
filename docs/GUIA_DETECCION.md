@@ -9,6 +9,9 @@ pequeño (el **detector**) qué hay en ella. Con la respuesta puede:
 Todo es opcional y está **apagado en todos los canales** hasta que lo enciendas en la rueda de ajustes del canal.
 Un canal sin detección no gasta nada.
 
+> Esta guía es para **instalar y entrenar**. Para saber **qué hace cada ajuste**, qué valores poner y cómo leer la
+> tarjeta del canal, mira el [manual de uso y configuración](MANUAL_DETECCION.md).
+
 ## 1. Elige cómo vas a enseñarle (dos tipos de modelo)
 
 | | **Clasificador** (`embed`) | **Cajas** (`yolox`) |

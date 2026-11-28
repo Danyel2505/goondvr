@@ -50,6 +50,10 @@ func TestLastSeenFollowsTheBroadcast(t *testing.T) {
 func TestLastSeenOfAPausedChannelComesFromThePresenceAndTheProbe(t *testing.T) {
 	ui := &fakeUI{pushes: map[string]int{}}
 	ch := newTestChannel(t, ui, time.Millisecond)
+	var body atomic.Value
+	var calls atomic.Int32
+	body.Store(roomLive)
+	fakeRoomAPI(t, &body, &calls) // first of all: it changes server.Config, which the card publisher reads once it is woken up
 	ch.Config.IsPaused = true
 
 	if air, _ := ch.ApplyPresence(&site.Presence{Live: true}); !air || ch.ExportInfo().LastSeen == "" {
@@ -68,10 +72,6 @@ func TestLastSeenOfAPausedChannelComesFromThePresenceAndTheProbe(t *testing.T) {
 		t.Fatal("going off the air must stamp the moment it was last seen")
 	}
 
-	var body atomic.Value
-	var calls atomic.Int32
-	body.Store(roomLive)
-	fakeRoomAPI(t, &body, &calls)
 	ch.stateMu.Lock()
 	ch.LastSeen = time.Date(2020, 1, 2, 3, 4, 0, 0, time.Local).Unix()
 	ch.stateMu.Unlock()
