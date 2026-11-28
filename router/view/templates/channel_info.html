@@ -108,6 +108,14 @@
     </div>
 
     <div class="ts-grid has-top-spaced">
+        <div class="column"><span class="ts-icon is-eye-icon"></span></div>
+        <div class="column is-fluid">
+            <div class="ts-text is-small is-bold">Last connection</div>
+            <div class="ts-text is-description">{{ if .Live }}Online now{{ else if .LastSeen }}{{ .LastSeen }}{{ else }}Never seen yet{{ end }}</div>
+        </div>
+    </div>
+
+    <div class="ts-grid has-top-spaced">
         <div class="column"><span class="ts-icon is-clock-icon"></span></div>
         <div class="column is-fluid">
             <div class="ts-text is-small is-bold">Segment duration</div>
@@ -179,6 +187,7 @@
             {{ if .Gender }}<span class="item">{{ if eq .Gender "f" }}♀{{ else if eq .Gender "m" }}♂{{ else if eq .Gender "t" }}⚧{{ else if eq .Gender "c" }}👫{{ else }}{{ .Gender }}{{ end }}</span>{{ end }}
         </div>
         {{ end }}
+        <div class="ts-text is-description is-small has-top-spaced-small" title="Last connection">Last seen: {{ if .Live }}now{{ else if .LastSeen }}{{ .LastSeen }}{{ else }}never{{ end }}</div>
         <div class="ts-meta has-top-spaced-small is-small">
             {{ if .Duration }}<span class="item"><span class="ts-icon is-clock-icon"></span> {{ .Duration }}</span>{{ end }}
             {{ if .Filesize }}<span class="item"><span class="ts-icon is-chart-pie-icon"></span> {{ .Filesize }}</span>{{ end }}
@@ -214,6 +223,7 @@
     {{ if .RoomTitle }}<div class="ts-text is-description is-small collapsed-title"><span>{{ .RoomTitle }}</span></div>{{ else }}<div class="collapsed-title"></div>{{ end }}
     {{ if .Gender }}<div class="ts-text is-small is-description collapsed-stat">{{ if eq .Gender "f" }}♀{{ else if eq .Gender "m" }}♂{{ else if eq .Gender "t" }}⚧{{ else if eq .Gender "c" }}👫{{ else }}{{ .Gender }}{{ end }}</div>{{ end }}
     {{ if and .Live .NumViewers }}<div class="ts-text is-small is-description collapsed-stat"><span class="ts-icon is-eye-icon"></span> {{ .NumViewers }}</div>{{ end }}
+    {{ if and (not .Live) .LastSeen }}<div class="ts-text is-small is-description collapsed-stat" title="Last connection">{{ .LastSeen }}</div>{{ end }}
     {{ if .Duration }}<div class="ts-text is-small is-description collapsed-stat">{{ .Duration }}</div>{{ end }}
     {{ if .Filesize }}<div class="ts-text is-small is-description collapsed-stat">{{ .Filesize }}</div>{{ end }}
     <div class="collapsed-actions">
