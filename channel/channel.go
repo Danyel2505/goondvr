@@ -61,6 +61,7 @@ type Channel struct {
 	lastRename          atomic.Int64
 	notFound            atomic.Bool
 	StreamedAt          int64
+	LastSeen            int64   // unix time it was last seen on air; stateMu, mirrored in Config.LastSeen
 	Duration            float64 // Seconds
 	Filesize            int     // Bytes
 	TotalDiskUsageBytes int64   // Total bytes across all recordings for this channel
@@ -129,6 +130,7 @@ func New(conf *entity.ChannelConfig) *Channel {
 		Gender:           conf.Gender,
 		SummaryCardImage: conf.SummaryCardImage,
 		StreamedAt:       conf.StreamedAt,
+		LastSeen:         conf.LastSeen,
 	}
 	go ch.Publisher()
 
@@ -288,11 +290,17 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 	tags := ch.Config.Tags // replaced as a whole under stateMu, never edited in place
 	set := ch.settingsLocked()
 	autoWaiting := ch.autoWaiting && set.AutoRecord
-	streamedAtUnix := ch.StreamedAt
+	streamedAtUnix, lastSeenUnix := ch.StreamedAt, ch.LastSeen
 	ch.stateMu.RUnlock()
-	var streamedAt string
+	var streamedAt, lastSeen string
 	if streamedAtUnix != 0 {
-		streamedAt = time.Unix(streamedAtUnix, 0).Format("2006-01-02 15:04 AM")
+		streamedAt = time.Unix(streamedAtUnix, 0).Format(lastSeenLayout)
+	}
+	if lastSeenUnix == 0 {
+		lastSeenUnix = streamedAtUnix // a config from before LastSeen existed: the last stream is the best we know
+	}
+	if lastSeenUnix != 0 {
+		lastSeen = time.Unix(lastSeenUnix, 0).Format(lastSeenLayout)
 	}
 	ch.logsMu.RLock()
 	logs := make([]string, len(ch.Logs))
@@ -323,6 +331,7 @@ func (ch *Channel) ExportInfo() *entity.ChannelInfo {
 		MaxDuration:      internal.FormatDuration(float64(set.MaxDuration * 60)), // MaxDuration from config is in minutes
 		MaxFilesize:      internal.FormatFilesize(set.MaxFilesize * 1024 * 1024), // MaxFilesize from config is in MB
 		StreamedAt:       streamedAt,
+		LastSeen:         lastSeen,
 		CreatedAt:        ch.Config.CreatedAt,
 		Duration:         internal.FormatDuration(duration),
 		Filesize:         internal.FormatFilesize(filesize),
@@ -419,16 +428,41 @@ func (ch *Channel) Resume(startSeq int) {
 	}()
 }
 
+// lastSeenLayout is how the cards show a date (24 hours, local time).
+const lastSeenLayout = "2006-01-02 15:04"
+
+// markSeenLocked stamps "the channel was on air just now". The caller holds stateMu.
+func (ch *Channel) markSeenLocked() {
+	ch.LastSeen = time.Now().Unix()
+	ch.Config.LastSeen = ch.LastSeen
+}
+
+// saveSoon writes the channel list so the last-seen date survives a restart. It must not be called with a
+// channel lock held (the writer takes them).
+func (ch *Channel) saveSoon() {
+	if server.Manager != nil {
+		_ = server.Manager.SaveConfig()
+	}
+}
+
 // UpdateOnlineStatus updates the online status of the channel.
 func (ch *Channel) UpdateOnlineStatus(isOnline bool) {
 	ch.stateMu.Lock()
+	wasOnline := ch.IsOnline
 	ch.IsOnline = isOnline
 	if isOnline {
 		ch.Available = true // it is being recorded, so it is on air
+		ch.markSeenLocked()
 	} else {
 		ch.NumViewers = 0
+		if wasOnline {
+			ch.markSeenLocked() // the broadcast just ended: that is the last time it was seen
+		}
 	}
 	ch.stateMu.Unlock()
+	if wasOnline && !isOnline {
+		ch.saveSoon()
+	}
 	ch.UpdateThumb()
 	ch.UpdateNow()
 }

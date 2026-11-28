@@ -78,6 +78,7 @@ type presenceEngine struct {
 	lastAnswer time.Time     // last time anything (list or probe) answered
 	probing    bool          // some site is being served by the per-channel method
 	kick       chan struct{} // wakes the loop up (a channel was added, settings were saved)
+	seenSaved  time.Time     // last time the list was written only because an on-air mark moved (the "last seen" date)
 }
 
 // kickPresence makes the engine look at the channels right away.
@@ -253,7 +254,7 @@ func (m *Manager) sweepList(src site.OnlineListSource, siteName string, chans []
 		return
 	}
 
-	tagsChanged := false
+	tagsChanged, airChanged := false, false
 	for name, ch := range byName {
 		p, ok := found[name]
 		var pp *site.Presence
@@ -274,11 +275,19 @@ func (m *Manager) sweepList(src site.OnlineListSource, siteName string, chans []
 			e.mu.Unlock()
 			continue
 		}
-		if _, t := ch.ApplyPresence(pp); t {
-			tagsChanged = true
-		}
+		a, t := ch.ApplyPresence(pp)
+		tagsChanged = tagsChanged || t
+		airChanged = airChanged || a
 	}
-	if tagsChanged {
+	// The "last seen" dates change with every on-air mark: writing the whole list each time would cost more
+	// than the date is worth, so those changes wait (at most 5 minutes; a normal exit saves them anyway).
+	e.mu.Lock()
+	saveSeen := airChanged && time.Since(e.seenSaved) > 5*time.Minute
+	if tagsChanged || saveSeen {
+		e.seenSaved = time.Now()
+	}
+	e.mu.Unlock()
+	if tagsChanged || saveSeen {
 		_ = m.SaveConfig()
 	}
 }

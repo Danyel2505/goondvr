@@ -28,6 +28,7 @@ func (ch *Channel) setAvailable(v bool) bool {
 		return false
 	}
 	ch.Available = v
+	ch.markSeenLocked() // on air now, or it just went off the air
 	if !v && !ch.IsOnline {
 		ch.NumViewers = 0
 	}
@@ -73,6 +74,9 @@ func (ch *Channel) ProbeAvailability(ctx context.Context, req *internal.Req) err
 	ch.stateMu.Lock()
 	changed := ch.Available != av.Live
 	ch.Available = av.Live
+	if changed {
+		ch.markSeenLocked()
+	}
 	if av.Live {
 		if av.NumViewers > 0 {
 			ch.NumViewers = av.NumViewers
@@ -111,6 +115,9 @@ func (ch *Channel) ApplyPresence(p *site.Presence) (airChanged, tagsChanged bool
 	}
 	airChanged = ch.Available != live
 	ch.Available = live
+	if airChanged {
+		ch.markSeenLocked()
+	}
 	if live {
 		if p.NumViewers > 0 {
 			ch.NumViewers = p.NumViewers

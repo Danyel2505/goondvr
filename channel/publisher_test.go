@@ -20,6 +20,14 @@ type fakeUI struct {
 	refuse  int           // refuse this many Publish calls (return false)
 	hang    chan struct{} // if set, Publish blocks until closed
 	lastLog []string
+	saved   int // SaveConfig calls
+}
+
+func (f *fakeUI) SaveConfig() error {
+	f.mu.Lock()
+	f.saved++
+	f.mu.Unlock()
+	return nil
 }
 
 func (f *fakeUI) HasViewers() bool { return f.viewers }

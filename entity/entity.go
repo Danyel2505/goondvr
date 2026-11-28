@@ -41,6 +41,7 @@ type ChannelConfig struct {
 	Gender           string `json:"gender,omitempty"`
 	SummaryCardImage string `json:"summary_card_image,omitempty"`
 	StreamedAt       int64  `json:"streamed_at,omitempty"`
+	LastSeen         int64  `json:"last_seen,omitempty"` // unix time the channel was last seen on air (see channel.markSeenLocked)
 	// Tags the site gives the room (lower case); filled in from the list of rooms on the air.
 	Tags []string `json:"tags,omitempty"`
 
@@ -198,6 +199,7 @@ type ChannelInfo struct {
 	TotalDiskUsage   string
 	Filename         string
 	StreamedAt       string
+	LastSeen         string // last time it was seen on air ("" = never seen); StreamedAt stands in for old configs
 	MaxDuration      string
 	MaxFilesize      string
 	CreatedAt        int64
